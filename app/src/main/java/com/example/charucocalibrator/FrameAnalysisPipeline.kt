@@ -126,7 +126,7 @@ class FrameAnalysisPipeline(
     fun runCalibration() {
         if (isCalibrating) return
 
-        val frames = acceptedFrameStore.frames
+        val frames = acceptedFrameStore.framesForCalibration()
         latestCalibrationResult = null
         latestCalibrationPath = null
         latestCalibrationStatus = when {

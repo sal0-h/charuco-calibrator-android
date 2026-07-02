@@ -1,14 +1,11 @@
 package com.example.charucocalibrator
 
 import android.content.Context
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.util.Log
 import org.json.JSONObject
 import org.opencv.core.Mat
+import org.opencv.imgcodecs.Imgcodecs
 import java.io.File
-import java.io.FileOutputStream
 import java.time.Instant
 
 data class AcceptedFrameRecord(
@@ -78,37 +75,29 @@ class AcceptedFrameStore(
         return try {
             val width = gray.cols()
             val height = gray.rows()
-            val nv21 = grayMatToNv21(gray)
-            FileOutputStream(imageFile).use { output ->
-                val compressed = YuvImage(
-                    nv21,
-                    ImageFormat.NV21,
-                    width,
-                    height,
-                    null
-                ).compressToJpeg(Rect(0, 0, width, height), JPEG_QUALITY, output)
-                check(compressed) { "JPEG compression failed" }
+            check(Imgcodecs.imwrite(imageFile.absolutePath, gray)) {
+                "OpenCV JPEG write failed for ${imageFile.name}"
             }
 
-            metadataFile.writeText(
-                JSONObject().apply {
-                    put("camera_id", cameraId)
-                    put("image_width", width)
-                    put("image_height", height)
-                    put("timestamp", Instant.now().toString())
-                    put("sensor_timestamp_ns", sensorTimestampNs ?: JSONObject.NULL)
-                    put("marker_count", detection.markerCount)
-                    put("charuco_corner_count", detection.charucoCornerCount)
-                    put("sharpness", sharpness)
-                    put("bbox_left", bbox.left)
-                    put("bbox_top", bbox.top)
-                    put("bbox_right", bbox.right)
-                    put("bbox_bottom", bbox.bottom)
-                    put("bbox_area_ratio", bbox.areaRatio)
-                    put("acceptance_reason", reason)
-                    put("orientation_note", ORIENTATION_NOTE)
-                }.toString(JSON_INDENT_SPACES)
-            )
+            val metadata = JSONObject().apply {
+                put("camera_id", cameraId)
+                put("image_width", width)
+                put("image_height", height)
+                put("timestamp", Instant.now().toString())
+                put("sensor_timestamp_ns", sensorTimestampNs ?: JSONObject.NULL)
+                put("marker_count", detection.markerCount)
+                put("charuco_corner_count", detection.charucoCornerCount)
+                put("sharpness", sharpness)
+                put("bbox_left", bbox.left)
+                put("bbox_top", bbox.top)
+                put("bbox_right", bbox.right)
+                put("bbox_bottom", bbox.bottom)
+                put("bbox_area_ratio", bbox.areaRatio)
+                put("acceptance_reason", reason)
+                put("orientation_note", ORIENTATION_NOTE)
+            }
+            CharucoCornerPersistence.appendToMetadata(metadata, corners, ids)
+            metadataFile.writeText(metadata.toString(JSON_INDENT_SPACES))
 
             val record = AcceptedFrameRecord(
                 imageFile = imageFile,
@@ -138,6 +127,60 @@ class AcceptedFrameStore(
         }
     }
 
+    fun framesForCalibration(): List<AcceptedFrameRecord> {
+        val inMemory = frames
+        if (inMemory.isNotEmpty()) return inMemory
+        return loadPersistedFrames()
+    }
+
+    fun loadPersistedFrames(): List<AcceptedFrameRecord> {
+        val directory = File(
+            context.getExternalFilesDir(null) ?: return emptyList(),
+            ACCEPTED_FRAMES_DIR
+        )
+        if (!directory.isDirectory) return emptyList()
+
+        return directory.listFiles { file -> file.extension == "json" }
+            ?.sortedBy { it.name }
+            ?.mapNotNull(::loadPersistedFrame)
+            ?: emptyList()
+    }
+
+    private fun loadPersistedFrame(metadataFile: File): AcceptedFrameRecord? {
+        val imageFile = File(metadataFile.parentFile, metadataFile.nameWithoutExtension + ".jpg")
+        if (!imageFile.isFile) return null
+
+        return runCatching {
+            val metadata = JSONObject(metadataFile.readText())
+            val persisted = CharucoCornerPersistence.readFromMetadata(metadata)
+                ?: return null
+            val (cornersMat, idsMat) = persisted.toMats()
+            val bbox = DetectionBoundingBox(
+                left = metadata.getInt("bbox_left"),
+                top = metadata.getInt("bbox_top"),
+                right = metadata.getInt("bbox_right"),
+                bottom = metadata.getInt("bbox_bottom"),
+                areaRatio = metadata.getDouble("bbox_area_ratio")
+            )
+            AcceptedFrameRecord(
+                imageFile = imageFile,
+                metadataFile = metadataFile,
+                imageWidth = metadata.getInt("image_width"),
+                imageHeight = metadata.getInt("image_height"),
+                charucoCorners = cornersMat,
+                charucoIds = idsMat,
+                markerCorners = emptyList(),
+                markerIds = Mat(),
+                markerCount = metadata.optInt("marker_count"),
+                charucoCornerCount = metadata.optInt("charuco_corner_count", persisted.ids.size),
+                sharpness = metadata.optDouble("sharpness"),
+                bbox = bbox
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to load persisted frame ${metadataFile.name}", error)
+        }.getOrNull()
+    }
+
     fun clear() {
         synchronized(lock) {
             records.forEach(AcceptedFrameRecord::release)
@@ -145,26 +188,8 @@ class AcceptedFrameStore(
         }
     }
 
-    private fun grayMatToNv21(gray: Mat): ByteArray {
-        val width = gray.cols()
-        val height = gray.rows()
-        val ySize = width * height
-        val nv21 = ByteArray(ySize + ySize / 2)
-        val row = ByteArray(width)
-        for (y in 0 until height) {
-            gray.get(y, 0, row)
-            System.arraycopy(row, 0, nv21, y * width, width)
-        }
-        val neutralChrominance = 128.toByte()
-        for (index in ySize until nv21.size) {
-            nv21[index] = neutralChrominance
-        }
-        return nv21
-    }
-
     companion object {
         const val ACCEPTED_FRAMES_DIR = "accepted_frames"
-        private const val JPEG_QUALITY = 95
         private const val JSON_INDENT_SPACES = 2
         private const val TAG = "AcceptedFrameStore"
     }
