@@ -27,6 +27,11 @@ data class DetectionResult(
     val charucoCorners: Mat? = null,
     val charucoIds: Mat? = null
 ) {
+    fun releaseCorrespondences() {
+        charucoCorners?.release()
+        charucoIds?.release()
+    }
+
     companion object {
         fun idle() = DetectionResult(
             markerCount = 0,

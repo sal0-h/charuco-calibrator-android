@@ -193,10 +193,11 @@ class FrameAnalysisPipeline(
                         sensorTimestampNs = latestSensorTimestampNs,
                         reason = decision.message
                     )
+                } else {
+                    detection.releaseCorrespondences()
                 }
             } else {
-                detection.charucoCorners?.release()
-                detection.charucoIds?.release()
+                detection.releaseCorrespondences()
             }
 
             publishSnapshot(processed, sharpness, detection)

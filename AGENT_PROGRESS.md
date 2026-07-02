@@ -15,7 +15,7 @@
 
 | Milestone | Result | Commit |
 | --- | --- | --- |
-| v0.1 | CameraX rear preview | `0f9d059` |
+| v0.1 | CameraX rear preview (historical) | `0f9d059` |
 | v0.2 | Camera2 diagnostics and `camera_report.json` export | `379738d` |
 | v0.3 | Camera2 camera `0` preview, YUV stream, and test-frame save | `f1f944d` |
 | B | Saved frame validation metadata | `95c81f1` |
@@ -25,7 +25,7 @@
 | F | Automatic frame acceptance | `Add automatic ChArUco frame acceptance` |
 | G | Calibration JSON export | `Add ChArUco calibration JSON export` |
 | H | Offline Python fallback script | `Add offline ChArUco calibration audit script` |
-| I | Review and cleanup | pending |
+| I | Review and cleanup | `Clean up calibration app lifecycle and docs` |
 
 ## ChArUco Android API feasibility (Milestone D)
 
@@ -49,35 +49,59 @@ Inspection method: downloaded the published AAR and inspected
 
 - Java/Kotlin APIs are sufficient for live detection and on-device calibration.
 - No custom JNI/C++ bridge is required for the planned board config.
-- The standard Maven AAR includes `org.opencv.objdetect.*` ArUco/ChArUco classes;
-  contrib packaging is not needed for this board.
+- Android-side ChArUco detection and calibration use the standard Maven AAR.
 
-### Offline fallback plan if on-device calibration fails physically
+### Offline fallback plan
 
-- Accepted frames and metadata remain exportable under `accepted_frames/`.
-- `scripts/calibrate_charuco_from_android_frames.py` can re-run calibration on a PC.
+- Accepted frames and metadata export under `accepted_frames/`.
+- `scripts/calibrate_charuco_from_android_frames.py` can audit or re-run calibration on a PC.
 
 ## Build / lint status
 
-- Milestone H: `assembleDebug` and `lintDebug` passed.
-- OpenCV version: `org.opencv:opencv:4.13.0` from Maven Central.
+- Milestones C–I: `assembleDebug` and `lintDebug` passed.
 
 ## Commits and pushes
 
 - `Add OpenCV frame processing pipeline` — pushed to `origin/main`.
+- `Document ChArUco Android API feasibility` — pushed to `origin/main`.
+- `Add live ChArUco detection prototype` — pushed to `origin/main`.
+- `Add automatic ChArUco frame acceptance` — pushed to `origin/main`.
 - `Add ChArUco calibration JSON export` — pushed to `origin/main`.
+- `Add offline ChArUco calibration audit script` — pushed to `origin/main`.
+- `Clean up calibration app lifecycle and docs` — pushed to `origin/main`.
 
 ## Known limitations
 
-- ChArUco detection, auto-acceptance, and calibration are not yet wired in
-  Milestone C.
-- Saved JPEGs remain in the sensor-native landscape orientation and do not
-  contain display-rotation EXIF transforms.
-
 - ChArUco live detection uses analysis-frame coordinates; no preview overlay is drawn.
 - Preview scaling/cropping is display-only and does not rotate analysis frames.
+- Saved JPEGs remain in the sensor-native landscape orientation and do not
+  contain display-rotation EXIF transforms.
+- CameraX is no longer a runtime dependency; only Camera2 is used.
+- No broad storage permissions are requested; outputs use app-specific external files.
+
+## Lifecycle review (Milestone I)
+
+- `Image` objects are always closed via `image.use {}` and `acquireLatestImage()`.
+- `ImageReader` uses `acquireLatestImage()` to drop stale frames under load.
+- Camera session/device/surfaces are closed in `closeCameraResources()`.
+- Background `HandlerThread`s and executors are stopped in `release()`.
+- OpenCV frame analysis runs off the UI thread.
+- Detection correspondence `Mat` objects are released after each processed frame.
 
 ## Manual S23 Ultra tests still needed
 
-- Point the printed ChArUco board at camera `0` and confirm live marker/corner counts.
-- Confirm rejection reasons when the board is absent or out of focus.
+- Full end-to-end: auto-capture 20+ frames, run calibration, inspect JSON.
+- Verify intrinsics are plausible for `4000x3000` sensor-native frames.
+- Confirm offline Python script reproduces similar results from exported frames.
+- Confirm calibration JSON `orientation_note` matches saved frame metadata.
+
+## Output paths
+
+Base directory:
+`/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
+
+- Test frames: `test_frame_<epoch>.jpg` + `.json`
+- Accepted frames: `accepted_frames/accepted_<epoch>.jpg` + `.json`
+- Camera report: `camera_report.json`
+- Calibration JSON: `charuco_calibration_result.json`
+- Offline script: `scripts/calibrate_charuco_from_android_frames.py`

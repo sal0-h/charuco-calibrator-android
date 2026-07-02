@@ -68,6 +68,14 @@ No broad storage permission is required.
 7. Verify metadata includes bbox fields, sharpness, counts, and `orientation_note`.
 8. Tap **Stop auto capture**, then **Clear accepted frames**, and confirm the counter resets.
 
+## Milestone I: full physical validation checklist
+
+1. Run Milestones B–G in order on the S23 Ultra.
+2. Confirm no CameraX dependency is required at runtime.
+3. Confirm outputs use app-specific storage only (no storage permission prompt).
+4. Rotate the phone in the UI while keeping analysis frames sensor-native landscape.
+5. Compare on-device `charuco_calibration_result.json` against the Python audit script.
+
 ## Offline Python calibration audit
 
 Requirements: Python 3, `opencv-contrib-python` (or full OpenCV build with `cv2.aruco`).
