@@ -21,12 +21,16 @@ class FrameAnalysisPipeline(
 ) {
     private val applicationContext = context.applicationContext
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val calibrationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processedCounter = AtomicLong(0)
     private val charucoDetector by lazy { CharucoFrameDetector() }
     private val frameAcceptance = FrameAcceptanceController()
     private val acceptedFrameStore = AcceptedFrameStore(applicationContext)
     private val calibrationEngine by lazy { CharucoCalibrationEngine() }
+
+    @Volatile
+    private var isCalibrating = false
 
     @Volatile
     private var latestCalibrationStatus: String? = null
@@ -117,40 +121,57 @@ class FrameAnalysisPipeline(
     }
 
     fun runCalibration() {
-        analysisExecutor.execute {
-            val frames = acceptedFrameStore.frames
-            if (frames.isEmpty()) {
-                latestCalibrationStatus = "No accepted frames to calibrate"
-                latestCalibrationPath = null
-                latestCalibrationResult = null
-                publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
-                return@execute
-            }
+        if (isCalibrating) return
 
-            imageWidth = frames.first().imageWidth
-            imageHeight = frames.first().imageHeight
-            val result = calibrationEngine.calibrate(frames)
-            latestCalibrationResult = result
-            latestCalibrationStatus = result.statusMessage
-            latestCalibrationPath = if (result.success) {
-                calibrationEngine.exportResult(
-                    context = applicationContext,
-                    result = result,
-                    cameraId = cameraId,
-                    imageWidth = imageWidth,
-                    imageHeight = imageHeight,
-                    acceptedFrames = frames.size
-                )?.absolutePath
-            } else {
-                null
+        val frames = acceptedFrameStore.frames
+        latestCalibrationResult = null
+        latestCalibrationPath = null
+        latestCalibrationStatus = when {
+            frames.isEmpty() -> "No accepted frames to calibrate"
+            else -> "Calibrating with ${frames.size} frames..."
+        }
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+
+        if (frames.isEmpty()) return
+
+        isCalibrating = true
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+
+        calibrationExecutor.execute {
+            try {
+                imageWidth = frames.first().imageWidth
+                imageHeight = frames.first().imageHeight
+                Log.i(TAG, "Starting calibration with ${frames.size} accepted frames")
+                val result = calibrationEngine.calibrate(frames)
+                latestCalibrationResult = result
+                latestCalibrationStatus = result.statusMessage
+                latestCalibrationPath = if (result.success) {
+                    calibrationEngine.exportResult(
+                        context = applicationContext,
+                        result = result,
+                        cameraId = cameraId,
+                        imageWidth = imageWidth,
+                        imageHeight = imageHeight,
+                        acceptedFrames = frames.size
+                    )?.absolutePath
+                } else {
+                    null
+                }
+                Log.i(
+                    TAG,
+                    "Calibration finished: success=${result.success}, message=${result.statusMessage}"
+                )
+            } finally {
+                isCalibrating = false
+                publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
             }
-            publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
         }
     }
 
     fun release() {
         released = true
         analysisExecutor.shutdown()
+        calibrationExecutor.shutdown()
         acceptedFrameStore.clear()
     }
 
@@ -260,7 +281,8 @@ class FrameAnalysisPipeline(
             calibrationFy = latestCalibrationResult?.fy,
             calibrationCx = latestCalibrationResult?.cx,
             calibrationCy = latestCalibrationResult?.cy,
-            calibrationOutputPath = latestCalibrationPath
+            calibrationOutputPath = latestCalibrationPath,
+            isCalibrating = isCalibrating
         )
         mainHandler.post {
             if (!released) onSnapshot(snapshot)

@@ -18,11 +18,20 @@ data class AcceptedFrameRecord(
     val imageHeight: Int,
     val charucoCorners: Mat,
     val charucoIds: Mat,
+    val markerCorners: List<Mat>,
+    val markerIds: Mat,
     val markerCount: Int,
     val charucoCornerCount: Int,
     val sharpness: Double,
     val bbox: DetectionBoundingBox
-)
+) {
+    fun release() {
+        charucoCorners.release()
+        charucoIds.release()
+        markerCorners.forEach(Mat::release)
+        markerIds.release()
+    }
+}
 
 class AcceptedFrameStore(
     private val context: Context
@@ -52,6 +61,8 @@ class AcceptedFrameStore(
         val bbox = detection.bbox ?: return null
         val corners = detection.charucoCorners ?: return null
         val ids = detection.charucoIds ?: return null
+        val markers = detection.markerCorners ?: return null
+        val markerIds = detection.markerIds ?: return null
 
         val directory = File(
             checkNotNull(context.getExternalFilesDir(null)) {
@@ -106,6 +117,8 @@ class AcceptedFrameStore(
                 imageHeight = height,
                 charucoCorners = corners.clone(),
                 charucoIds = ids.clone(),
+                markerCorners = markers.map { it.clone() },
+                markerIds = markerIds.clone(),
                 markerCount = detection.markerCount,
                 charucoCornerCount = detection.charucoCornerCount,
                 sharpness = sharpness,
@@ -116,6 +129,8 @@ class AcceptedFrameStore(
             }
             corners.release()
             ids.release()
+            markers.forEach(Mat::release)
+            markerIds.release()
             record
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to save accepted frame", exception)
@@ -125,10 +140,7 @@ class AcceptedFrameStore(
 
     fun clear() {
         synchronized(lock) {
-            records.forEach { record ->
-                record.charucoCorners.release()
-                record.charucoIds.release()
-            }
+            records.forEach(AcceptedFrameRecord::release)
             records.clear()
         }
     }

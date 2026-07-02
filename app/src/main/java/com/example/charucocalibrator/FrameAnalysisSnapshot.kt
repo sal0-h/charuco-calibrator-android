@@ -20,5 +20,6 @@ data class FrameAnalysisSnapshot(
     val calibrationFy: Double? = null,
     val calibrationCx: Double? = null,
     val calibrationCy: Double? = null,
-    val calibrationOutputPath: String? = null
+    val calibrationOutputPath: String? = null,
+    val isCalibrating: Boolean = false
 )

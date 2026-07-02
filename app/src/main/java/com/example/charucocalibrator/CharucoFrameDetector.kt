@@ -22,11 +22,15 @@ data class DetectionResult(
     val rejectionReason: String?,
     val bbox: DetectionBoundingBox?,
     val charucoCorners: Mat? = null,
-    val charucoIds: Mat? = null
+    val charucoIds: Mat? = null,
+    val markerCorners: List<Mat>? = null,
+    val markerIds: Mat? = null
 ) {
     fun releaseCorrespondences() {
         charucoCorners?.release()
         charucoIds?.release()
+        markerCorners?.forEach(Mat::release)
+        markerIds?.release()
     }
 
     companion object {
@@ -83,6 +87,12 @@ class CharucoFrameDetector {
                 }
                 val clonedCorners = if (status == "detected") charucoCorners.clone() else null
                 val clonedIds = if (status == "detected") charucoIds.clone() else null
+                val clonedMarkerCorners = if (status == "detected") {
+                    markerCorners.map { it.clone() }
+                } else {
+                    null
+                }
+                val clonedMarkerIds = if (status == "detected") markerIds.clone() else null
                 DetectionResult(
                     markerCount = markerCount,
                     charucoCornerCount = cornerCount,
@@ -94,7 +104,9 @@ class CharucoFrameDetector {
                     },
                     bbox = bbox,
                     charucoCorners = clonedCorners,
-                    charucoIds = clonedIds
+                    charucoIds = clonedIds,
+                    markerCorners = clonedMarkerCorners,
+                    markerIds = clonedMarkerIds
                 )
             }
         } catch (exception: Exception) {

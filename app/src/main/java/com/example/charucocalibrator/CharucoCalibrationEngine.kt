@@ -1,6 +1,7 @@
 package com.example.charucocalibrator
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.android.OpenCVLoader
@@ -55,8 +56,8 @@ class CharucoCalibrationEngine {
             val imgPoints = Mat()
             try {
                 board.matchImagePoints(
-                    listOf(frame.charucoCorners),
-                    frame.charucoIds,
+                    frame.markerCorners,
+                    frame.markerIds,
                     objPoints,
                     imgPoints
                 )
@@ -67,7 +68,8 @@ class CharucoCalibrationEngine {
                     objPoints.release()
                     imgPoints.release()
                 }
-            } catch (_: Exception) {
+            } catch (exception: Exception) {
+                Log.w(TAG, "matchImagePoints failed for ${frame.imageFile.name}", exception)
                 objPoints.release()
                 imgPoints.release()
             }
@@ -205,5 +207,6 @@ class CharucoCalibrationEngine {
     companion object {
         const val CALIBRATION_OUTPUT_FILE = "charuco_calibration_result.json"
         private const val JSON_INDENT_SPACES = 2
+        private const val TAG = "CharucoCalibrationEngine"
     }
 }

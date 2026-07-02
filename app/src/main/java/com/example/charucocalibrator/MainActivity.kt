@@ -281,8 +281,9 @@ private fun DiagnosticsPanel(
                     appendLine("detection: ${snapshot.detectionStatus}")
                     snapshot.rejectionReason?.let { appendLine("rejection: $it") }
                     snapshot.bboxAreaRatio?.let {
-                        append("bbox area ratio: ${"%.3f".format(it)}")
+                        appendLine("bbox area ratio: ${"%.3f".format(it)}")
                     }
+                    snapshot.calibrationStatus?.let { appendLine("calibration: $it") }
                 }
             },
             color = Color.White,
@@ -343,10 +344,17 @@ private fun DiagnosticsPanel(
         }
         Button(
             onClick = onRunCalibration,
-            enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3,
+            enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3 &&
+                analysisSnapshot?.isCalibrating != true,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Run calibration")
+            Text(
+                if (analysisSnapshot?.isCalibrating == true) {
+                    "Calibrating..."
+                } else {
+                    "Run calibration"
+                }
+            )
         }
         analysisSnapshot?.calibrationStatus?.let { status ->
             Text(
