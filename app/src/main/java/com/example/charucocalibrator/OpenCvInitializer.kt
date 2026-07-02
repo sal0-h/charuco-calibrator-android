@@ -7,14 +7,21 @@ import java.util.concurrent.atomic.AtomicBoolean
 object OpenCvInitializer {
     private val initialized = AtomicBoolean(false)
 
+    fun isInitialized(): Boolean = initialized.get()
+
     fun ensureInitialized(): Boolean {
         if (initialized.get()) return true
         synchronized(this) {
             if (initialized.get()) return true
-            val loaded = OpenCVLoader.initLocal()
+            val loaded = runCatching {
+                OpenCVLoader.initLocal()
+            }.getOrElse { error ->
+                Log.e(TAG, "OpenCVLoader.initLocal() threw", error)
+                false
+            }
             if (loaded) {
                 initialized.set(true)
-                Log.i(TAG, "OpenCV loaded successfully")
+                Log.i(TAG, "OpenCV loaded successfully (${OpenCVLoader.OPENCV_VERSION})")
             } else {
                 Log.e(TAG, "OpenCV initialization failed")
             }
