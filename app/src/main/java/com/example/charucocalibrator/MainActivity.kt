@@ -15,8 +15,14 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
@@ -24,19 +30,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.charucocalibrator.ui.theme.CharucoCalibratorTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,6 +87,28 @@ private fun CameraApp(modifier: Modifier = Modifier) {
 
 @Composable
 private fun CameraScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var report by remember { mutableStateOf<CameraReport?>(null) }
+    var diagnosticsError by remember { mutableStateOf<String?>(null) }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(context) {
+        val result = withContext(Dispatchers.Default) {
+            runCatching { CameraDiagnostics.collect(context.applicationContext) }
+        }
+        result.fold(
+            onSuccess = {
+                report = it
+                diagnosticsError = null
+            },
+            onFailure = {
+                diagnosticsError = it.message ?: it.javaClass.simpleName
+                Log.e(TAG, "Unable to collect camera diagnostics", it)
+            }
+        )
+    }
+
     Box(modifier = modifier.background(Color.Black)) {
         CameraPreview(modifier = Modifier.fillMaxSize())
         Text(
@@ -88,6 +122,89 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
                 .background(Color.Black.copy(alpha = 0.6f))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         )
+        DiagnosticsPanel(
+            report = report,
+            error = diagnosticsError,
+            exportMessage = exportMessage,
+            onExport = {
+                report?.let { currentReport ->
+                    coroutineScope.launch {
+                        exportMessage = "Saving report..."
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching {
+                                CameraDiagnostics.export(
+                                    context.applicationContext,
+                                    currentReport
+                                )
+                            }
+                        }
+                        exportMessage = result.fold(
+                            onSuccess = { "Saved to:\n${it.absolutePath}" },
+                            onFailure = {
+                                Log.e(TAG, "Unable to export camera report", it)
+                                "Export failed: ${it.message ?: it.javaClass.simpleName}"
+                            }
+                        )
+                    }
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.58f)
+        )
+    }
+}
+
+@Composable
+private fun DiagnosticsPanel(
+    report: CameraReport?,
+    error: String?,
+    exportMessage: String?,
+    onExport: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.82f))
+            .navigationBarsPadding()
+            .padding(12.dp)
+    ) {
+        Text(
+            text = "Camera2 diagnostics",
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall
+        )
+        Text(
+            text = when {
+                error != null -> "Diagnostics failed: $error"
+                report == null -> "Loading camera characteristics..."
+                else -> report.toDisplayText()
+            },
+            color = if (error == null) Color.White else MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .verticalScroll(rememberScrollState())
+        )
+        Button(
+            onClick = onExport,
+            enabled = report != null,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Export camera report")
+        }
+        exportMessage?.let {
+            Text(
+                text = it,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
     }
 }
 
