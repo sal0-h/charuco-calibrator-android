@@ -154,7 +154,6 @@ class AcceptedFrameStore(
             val metadata = JSONObject(metadataFile.readText())
             val persisted = CharucoCornerPersistence.readFromMetadata(metadata)
                 ?: return null
-            val (cornersMat, idsMat) = persisted.toMats()
             val bbox = DetectionBoundingBox(
                 left = metadata.getInt("bbox_left"),
                 top = metadata.getInt("bbox_top"),
@@ -162,6 +161,11 @@ class AcceptedFrameStore(
                 bottom = metadata.getInt("bbox_bottom"),
                 areaRatio = metadata.getDouble("bbox_area_ratio")
             )
+            val cornersMat = OpenCvMatAccess.toImagePointsMat(persisted.imagePoints.toList()) ?: return null
+            val idsMat = Mat(persisted.ids.size, 1, org.opencv.core.CvType.CV_32SC1)
+            for (index in persisted.ids.indices) {
+                idsMat.put(index, 0, intArrayOf(persisted.ids[index]))
+            }
             AcceptedFrameRecord(
                 imageFile = imageFile,
                 metadataFile = metadataFile,

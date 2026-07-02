@@ -109,10 +109,10 @@ class CharucoCalibrationEngine {
                 success = true,
                 statusMessage = "Calibration succeeded with ${objectPointSets.size} views",
                 reprojectionErrorPx = reprojectionError,
-                fx = cameraMatrix.get(0, 0)[0],
-                fy = cameraMatrix.get(1, 1)[0],
-                cx = cameraMatrix.get(0, 2)[0],
-                cy = cameraMatrix.get(1, 2)[0],
+                fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
+                fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
+                cx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
+                cy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
                 cameraMatrix = cameraMatrix,
                 distortionCoefficients = distortion
             )
@@ -146,14 +146,16 @@ class CharucoCalibrationEngine {
             distortion.convertTo(distortionValues, org.opencv.core.CvType.CV_64F)
             val coeffs = DoubleArray(5) { index ->
                 if (index < distortionValues.total().toInt()) {
-                    distortionValues.get(index, 0)[0]
+                    OpenCvMatAccess.readMatrixValue(distortionValues, index, 0)
                 } else {
                     0.0
                 }
             }
 
             val matrixValues = Array(3) { row ->
-                DoubleArray(3) { column -> cameraMatrix.get(row, column)[0] }
+                DoubleArray(3) { column ->
+                    OpenCvMatAccess.readMatrixValue(cameraMatrix, row, column)
+                }
             }
 
             output.writeText(

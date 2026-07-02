@@ -3,9 +3,6 @@ package com.example.charucocalibrator
 import android.util.Log
 import org.json.JSONObject
 import org.opencv.core.Mat
-import org.opencv.core.MatOfInt
-import org.opencv.core.MatOfPoint2f
-import org.opencv.core.MatOfPoint3f
 import org.opencv.core.Point
 import org.opencv.core.Point3
 import org.opencv.imgcodecs.Imgcodecs
@@ -20,18 +17,25 @@ data class CorrespondenceSet(
 )
 
 object CharucoCorrespondenceBuilder {
-    /**
-     * OpenCV Java `Board.matchImagePoints(List<Mat>, ...)` treats each list entry as one
-     * detected marker (4 corners). ChArUco needs one 2D point per list entry, so the Python
-     * binding works but the Java binding does not when given a single Mat of N charuco corners.
-     * Map charuco IDs to [CharucoBoard.getChessboardCorners] directly instead.
-     */
     fun build(
         frame: AcceptedFrameRecord,
         board: CharucoBoard,
         detector: CharucoDetector
     ): CorrespondenceSet? {
-        if (!frame.charucoCorners.empty() && !frame.charucoIds.empty()) {
+        return runCatching {
+            buildInternal(frame, board, detector)
+        }.getOrElse { error ->
+            Log.w(TAG, "${frame.imageFile.name}: correspondence build crashed", error)
+            null
+        }
+    }
+
+    private fun buildInternal(
+        frame: AcceptedFrameRecord,
+        board: CharucoBoard,
+        detector: CharucoDetector
+    ): CorrespondenceSet? {
+        if (OpenCvMatAccess.isAlive(frame.charucoCorners) && OpenCvMatAccess.isAlive(frame.charucoIds)) {
             buildManual(
                 board = board,
                 charucoCorners = frame.charucoCorners,
@@ -42,19 +46,13 @@ object CharucoCorrespondenceBuilder {
         }
 
         loadPersistedCorners(frame)?.let { persisted ->
-            val (cornersMat, idsMat) = persisted.toMats()
-            return try {
-                buildManual(
-                    board = board,
-                    charucoCorners = cornersMat,
-                    charucoIds = idsMat,
-                    frameName = frame.imageFile.name,
-                    method = "metadata_manual_id_map"
-                )
-            } finally {
-                cornersMat.release()
-                idsMat.release()
-            }
+            buildManual(
+                board = board,
+                imageCorners = persisted.imagePoints.toList(),
+                cornerIds = persisted.ids.toList(),
+                frameName = frame.imageFile.name,
+                method = "metadata_manual_id_map"
+            )?.let { return it }
         }
 
         return buildFromSavedJpeg(frame, board, detector)
@@ -75,7 +73,7 @@ object CharucoCorrespondenceBuilder {
         detector: CharucoDetector
     ): CorrespondenceSet? {
         val gray = Imgcodecs.imread(frame.imageFile.absolutePath, Imgcodecs.IMREAD_GRAYSCALE)
-        if (gray.empty()) {
+        if (!OpenCvMatAccess.isAlive(gray)) {
             Log.w(TAG, "${frame.imageFile.name}: could not read saved JPEG")
             return null
         }
@@ -89,21 +87,13 @@ object CharucoCorrespondenceBuilder {
         val markerIds = Mat()
         return try {
             detector.detectBoard(bgr, charucoCorners, charucoIds, markerCorners, markerIds)
-            if (charucoIds.rows() < AcceptanceConfig.MIN_CHARUCO_CORNERS) {
-                Log.w(
-                    TAG,
-                    "${frame.imageFile.name}: JPEG re-detect found ${charucoIds.rows()} charuco corners"
-                )
-                null
-            } else {
-                buildManual(
-                    board = board,
-                    charucoCorners = charucoCorners,
-                    charucoIds = charucoIds,
-                    frameName = frame.imageFile.name,
-                    method = "jpeg_redetect_manual_id_map"
-                )
-            }
+            buildManual(
+                board = board,
+                charucoCorners = charucoCorners,
+                charucoIds = charucoIds,
+                frameName = frame.imageFile.name,
+                method = "jpeg_redetect_manual_id_map"
+            )
         } catch (exception: Exception) {
             Log.w(TAG, "${frame.imageFile.name}: JPEG re-detect failed", exception)
             null
@@ -123,18 +113,26 @@ object CharucoCorrespondenceBuilder {
         frameName: String,
         method: String
     ): CorrespondenceSet? {
-        val boardCorners = board.chessboardCorners.toArray()
-        if (boardCorners.isEmpty()) {
-            Log.w(TAG, "$frameName: board has no chessboard corners")
-            return null
-        }
+        val imageCorners = OpenCvMatAccess.readPoint2fRows(charucoCorners) ?: return null
+        val cornerIds = OpenCvMatAccess.readIntRows(charucoIds) ?: return null
+        return buildManual(
+            board = board,
+            imageCorners = imageCorners,
+            cornerIds = cornerIds,
+            frameName = frameName,
+            method = method
+        )
+    }
 
-        val imageCorners = runCatching { MatOfPoint2f(charucoCorners).toArray() }.getOrElse { error ->
-            Log.w(TAG, "$frameName: failed to read charuco image corners", error)
-            return null
-        }
-        val cornerIds = runCatching { MatOfInt(charucoIds).toArray() }.getOrElse { error ->
-            Log.w(TAG, "$frameName: failed to read charuco corner ids", error)
+    private fun buildManual(
+        board: CharucoBoard,
+        imageCorners: List<Point>,
+        cornerIds: List<Int>,
+        frameName: String,
+        method: String
+    ): CorrespondenceSet? {
+        val boardCorners = OpenCvMatAccess.readBoardCorners(board) ?: run {
+            Log.w(TAG, "$frameName: board has no chessboard corners")
             return null
         }
 
@@ -160,10 +158,11 @@ object CharucoCorrespondenceBuilder {
             return null
         }
 
-        val objectMat = MatOfPoint3f()
-        objectMat.fromList(objectPoints)
-        val imageMat = MatOfPoint2f()
-        imageMat.fromList(matchedImagePoints)
+        val objectMat = OpenCvMatAccess.toObjectPointsMat(objectPoints) ?: return null
+        val imageMat = OpenCvMatAccess.toImagePointsMat(matchedImagePoints) ?: run {
+            objectMat.release()
+            return null
+        }
 
         Log.i(TAG, "$frameName: $method produced ${objectPoints.size} points")
         return CorrespondenceSet(

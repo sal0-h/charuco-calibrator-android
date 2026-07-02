@@ -3,25 +3,17 @@ package com.example.charucocalibrator
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.core.Mat
-import org.opencv.core.MatOfInt
-import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
 
 data class PersistedCharucoCorners(
     val ids: IntArray,
     val imagePoints: Array<Point>
-) {
-    fun toMats(): Pair<Mat, Mat> {
-        val cornersMat = MatOfPoint2f(*imagePoints)
-        val idsMat = MatOfInt(*ids)
-        return cornersMat to idsMat
-    }
-}
+)
 
 object CharucoCornerPersistence {
     fun appendToMetadata(metadata: JSONObject, charucoCorners: Mat, charucoIds: Mat) {
-        val imagePoints = MatOfPoint2f(charucoCorners).toArray()
-        val ids = MatOfInt(charucoIds).toArray()
+        val imagePoints = OpenCvMatAccess.readPoint2fRows(charucoCorners) ?: return
+        val ids = OpenCvMatAccess.readIntRows(charucoIds) ?: return
         if (imagePoints.isEmpty() || ids.isEmpty()) return
 
         metadata.put("charuco_ids", ids.toJsonArray())
@@ -50,5 +42,8 @@ object CharucoCornerPersistence {
     }
 
     private fun IntArray.toJsonArray(): JSONArray =
+        JSONArray().also { array -> forEach(array::put) }
+
+    private fun List<Int>.toJsonArray(): JSONArray =
         JSONArray().also { array -> forEach(array::put) }
 }
