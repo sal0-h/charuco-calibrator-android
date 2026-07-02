@@ -20,21 +20,52 @@
 | v0.3 | Camera2 camera `0` preview, YUV stream, and test-frame save | `f1f944d` |
 | B | Saved frame validation metadata | `95c81f1` |
 | C | OpenCV dependency and sharpness processing | `Add OpenCV frame processing pipeline` |
-| D | ChArUco API feasibility check | pending |
+| D | ChArUco API feasibility check | `Document ChArUco Android API feasibility` |
 | E | Live ChArUco detection prototype | pending |
 | F | Automatic frame acceptance | pending |
 | G | Calibration JSON export | pending |
 | H | Offline Python fallback script | pending |
 | I | Review and cleanup | pending |
 
+## ChArUco Android API feasibility (Milestone D)
+
+Dependency: `org.opencv:opencv:4.13.0` from Maven Central.
+
+Inspection method: downloaded the published AAR and inspected
+`classes.jar`, then added `CharucoApiFeasibility.kt` as a compile-time probe.
+
+### Available in Java/Kotlin bindings
+
+| Capability | Android class / method | Status |
+| --- | --- | --- |
+| ArUco dictionary access | `Objdetect.getPredefinedDictionary(Objdetect.DICT_5X5_100)` | Available |
+| Marker detection | `ArucoDetector.detectMarkers(...)` | Available |
+| ChArUco board construction | `CharucoBoard(Size, squareLength, markerLength, dictionary)` | Available |
+| ChArUco corner detection / interpolation | `CharucoDetector.detectBoard(...)` | Available |
+| `matchImagePoints` equivalent | `Board.matchImagePoints(...)` on `CharucoBoard` | Available |
+| Pinhole calibration | `Calib3d.calibrateCamera(...)` | Available |
+
+### Decision
+
+- Java/Kotlin APIs are sufficient for live detection and on-device calibration.
+- No custom JNI/C++ bridge is required for the planned board config.
+- The standard Maven AAR includes `org.opencv.objdetect.*` ArUco/ChArUco classes;
+  contrib packaging is not needed for this board.
+
+### Offline fallback plan if on-device calibration fails physically
+
+- Accepted frames and metadata remain exportable under `accepted_frames/`.
+- `scripts/calibrate_charuco_from_android_frames.py` can re-run calibration on a PC.
+
 ## Build / lint status
 
-- Milestone C: `assembleDebug` and `lintDebug` passed.
+- Milestone D: `assembleDebug` and `lintDebug` passed.
 - OpenCV version: `org.opencv:opencv:4.13.0` from Maven Central.
 
 ## Commits and pushes
 
 - `Add OpenCV frame processing pipeline` — pushed to `origin/main`.
+- `Document ChArUco Android API feasibility` — pending push.
 
 ## Known limitations
 
