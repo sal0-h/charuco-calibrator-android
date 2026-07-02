@@ -7,8 +7,10 @@ All Android outputs use the app-specific external files directory, normally:
 `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
 
 - Camera report: `camera_report.json`
-- Test frames: `test_frame_<epoch_millis>.jpg`
-- Test-frame metadata: `test_frame_<epoch_millis>.json`
+- Test frames: `test_frame_<epoch_millis>.jpg` and `.json`
+- Accepted frames: `accepted_frames/accepted_<epoch_millis>.jpg` and `.json`
+- Camera report: `camera_report.json`
+- Calibration JSON: `charuco_calibration_result.json`
 
 No broad storage permission is required.
 
@@ -33,6 +35,18 @@ No broad storage permission is required.
    `Camera2 sensor-native landscape grid; not display-rotated`.
 10. Repeat several saves and confirm the preview, frame counter, diagnostics
     export, and camera report continue to work.
+
+## Milestone C: OpenCV sharpness processing on the S23 Ultra
+
+1. Install and launch the debug app.
+2. Grant camera permission and confirm `camera_id: 0`.
+3. Confirm analysis resolution is `4000x3000` or note the fallback.
+4. Point the camera at a textured surface and watch `sharpness` update.
+5. Confirm `raw frames` increases continuously and `processed frames` increases
+   at roughly 3–5 FPS.
+6. Confirm `processing FPS` is near 3–5 while the preview is running.
+7. Tap **Save test frame** and confirm JPEG + metadata export still works.
+8. Export the camera report and confirm diagnostics still work.
 
 ## Future end-to-end board test
 

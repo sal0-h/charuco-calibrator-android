@@ -58,7 +58,8 @@ class Camera2Controller(
     private val onStreamConfigured: (CameraStreamConfiguration) -> Unit,
     private val onFrameCountChanged: (Long) -> Unit,
     private val onStatusChanged: (String) -> Unit,
-    private val onFrameSaveResult: (Result<SavedFrameFiles>) -> Unit
+    private val onFrameSaveResult: (Result<SavedFrameFiles>) -> Unit,
+    private val onAnalysisSnapshot: (FrameAnalysisSnapshot) -> Unit = {}
 ) {
     private val applicationContext = context.applicationContext
     private val cameraManager = applicationContext.getSystemService(CameraManager::class.java)
@@ -68,6 +69,7 @@ class Camera2Controller(
     private val imageThread = HandlerThread("Camera2Images").apply { start() }
     private val imageHandler = Handler(imageThread.looper)
     private val saveExecutor = Executors.newSingleThreadExecutor()
+    private val frameAnalysisPipeline = FrameAnalysisPipeline(onAnalysisSnapshot)
 
     private val frameCounter = AtomicLong(0)
     private val streamActive = AtomicBoolean(false)
@@ -159,6 +161,7 @@ class Camera2Controller(
         }
         imageThread.quitSafely()
         saveExecutor.shutdown()
+        frameAnalysisPipeline.release()
     }
 
     fun requestSaveNextFrame(): Boolean {
@@ -370,6 +373,7 @@ class Camera2Controller(
         image.use {
             val count = frameCounter.incrementAndGet()
             notifyFrameCount(count)
+            frameAnalysisPipeline.submitFrame(it, count)
 
             if (saveRequested.compareAndSet(true, false)) {
                 try {

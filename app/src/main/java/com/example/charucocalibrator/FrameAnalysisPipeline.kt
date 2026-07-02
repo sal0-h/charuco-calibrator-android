@@ -1,0 +1,144 @@
+package com.example.charucocalibrator
+
+import android.media.Image
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import org.opencv.core.Core
+import org.opencv.core.CvType
+import org.opencv.core.Mat
+import org.opencv.core.MatOfDouble
+import org.opencv.imgproc.Imgproc
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+class FrameAnalysisPipeline(
+    private val onSnapshot: (FrameAnalysisSnapshot) -> Unit
+) {
+    private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val processedCounter = AtomicLong(0)
+    private val openCvReady = AtomicBoolean(false)
+
+    @Volatile
+    private var lastProcessTimeNs = 0L
+
+    @Volatile
+    private var rawFrameCount = 0L
+
+    private val processTimestampsNs = ArrayDeque<Long>()
+
+    @Volatile
+    private var released = false
+
+    @Volatile
+    private var latestSharpness: Double? = null
+
+    fun submitFrame(image: Image, rawCount: Long) {
+        if (released) return
+        rawFrameCount = rawCount
+
+        val now = System.nanoTime()
+        if (now - lastProcessTimeNs < MIN_PROCESS_INTERVAL_NS) {
+            publishSnapshot(processedCounter.get(), latestSharpness)
+            return
+        }
+        lastProcessTimeNs = now
+
+        val gray = try {
+            YuvToGrayMat.fromYuv420888(image)
+        } catch (exception: Exception) {
+            Log.e(TAG, "Failed to convert YUV frame to grayscale", exception)
+            publishSnapshot(processedCounter.get(), null)
+            return
+        }
+
+        analysisExecutor.execute {
+            if (released) {
+                gray.release()
+                return@execute
+            }
+            processGrayFrame(gray)
+        }
+    }
+
+    fun release() {
+        released = true
+        analysisExecutor.shutdown()
+    }
+
+    private fun processGrayFrame(gray: Mat) {
+        try {
+            if (!ensureOpenCv()) {
+                publishSnapshot(processedCounter.get(), null)
+                return
+            }
+
+            val sharpness = computeLaplacianVariance(gray)
+            latestSharpness = sharpness
+            val processed = processedCounter.incrementAndGet()
+            updateProcessingFps()
+            publishSnapshot(processed, sharpness)
+        } finally {
+            gray.release()
+        }
+    }
+
+    private fun computeLaplacianVariance(gray: Mat): Double {
+        val laplacian = Mat()
+        val mean = MatOfDouble()
+        val stddev = MatOfDouble()
+        return try {
+            Imgproc.Laplacian(gray, laplacian, CvType.CV_64F)
+            Core.meanStdDev(laplacian, mean, stddev)
+            val sigma = stddev.get(0, 0)[0]
+            sigma * sigma
+        } finally {
+            laplacian.release()
+            mean.release()
+            stddev.release()
+        }
+    }
+
+    private fun ensureOpenCv(): Boolean {
+        if (openCvReady.get()) return true
+        val loaded = OpenCvInitializer.ensureInitialized()
+        if (loaded) openCvReady.set(true)
+        return loaded
+    }
+
+    private fun updateProcessingFps() {
+        val now = System.nanoTime()
+        processTimestampsNs.addLast(now)
+        while (processTimestampsNs.size > FPS_WINDOW_SIZE) {
+            processTimestampsNs.removeFirst()
+        }
+    }
+
+    private fun currentProcessingFps(): Double {
+        if (processTimestampsNs.size < 2) return 0.0
+        val durationNs = processTimestampsNs.last() - processTimestampsNs.first()
+        if (durationNs <= 0L) return 0.0
+        return (processTimestampsNs.size - 1) * 1_000_000_000.0 / durationNs
+    }
+
+    private fun publishSnapshot(processedCount: Long, sharpness: Double?) {
+        val snapshot = FrameAnalysisSnapshot(
+            rawFrameCount = rawFrameCount,
+            processedFrameCount = processedCount,
+            sharpness = sharpness,
+            processingFps = currentProcessingFps()
+        )
+        mainHandler.post {
+            if (!released) onSnapshot(snapshot)
+        }
+    }
+
+    companion object {
+        private const val TAG = "FrameAnalysisPipeline"
+        private const val MIN_PROCESS_INTERVAL_NS = 250_000_000L
+        private const val FPS_WINDOW_SIZE = 8
+    }
+}

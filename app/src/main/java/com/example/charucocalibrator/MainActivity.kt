@@ -97,6 +97,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
         mutableStateOf<CameraStreamConfiguration?>(null)
     }
     var frameCount by remember { mutableLongStateOf(0L) }
+    var analysisSnapshot by remember { mutableStateOf<FrameAnalysisSnapshot?>(null) }
     var pipelineStatus by remember { mutableStateOf("Waiting for camera surface...") }
     var frameSaveMessage by remember { mutableStateOf<String?>(null) }
     var latestSavedFrame by remember { mutableStateOf<SavedFrameFiles?>(null) }
@@ -119,7 +120,8 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
                         "Frame save failed: ${it.message ?: it.javaClass.simpleName}"
                     }
                 )
-            }
+            },
+            onAnalysisSnapshot = { analysisSnapshot = it }
         )
     }
 
@@ -158,6 +160,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
         DiagnosticsPanel(
             streamConfiguration = streamConfiguration,
             frameCount = frameCount,
+            analysisSnapshot = analysisSnapshot,
             pipelineStatus = pipelineStatus,
             frameSaveMessage = frameSaveMessage,
             latestSavedFrame = latestSavedFrame,
@@ -205,6 +208,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
 private fun DiagnosticsPanel(
     streamConfiguration: CameraStreamConfiguration?,
     frameCount: Long,
+    analysisSnapshot: FrameAnalysisSnapshot?,
     pipelineStatus: String,
     frameSaveMessage: String?,
     latestSavedFrame: SavedFrameFiles?,
@@ -235,7 +239,24 @@ private fun DiagnosticsPanel(
                 appendLine(
                     "preview: ${streamConfiguration?.previewSize?.display() ?: "configuring"}"
                 )
-                append("frames: $frameCount")
+                appendLine("raw frames: $frameCount")
+                analysisSnapshot?.let { snapshot ->
+                    appendLine("processed frames: ${snapshot.processedFrameCount}")
+                    appendLine(
+                        "sharpness: ${
+                            snapshot.sharpness?.let { "%.1f".format(it) } ?: "n/a"
+                        }"
+                    )
+                    append(
+                        "processing FPS: ${
+                            if (snapshot.processingFps > 0.0) {
+                                "%.1f".format(snapshot.processingFps)
+                            } else {
+                                "n/a"
+                            }
+                        }"
+                    )
+                }
             },
             color = Color.White,
             style = MaterialTheme.typography.bodySmall,
