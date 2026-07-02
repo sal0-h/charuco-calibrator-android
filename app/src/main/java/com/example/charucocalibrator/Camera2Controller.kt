@@ -22,6 +22,7 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.util.Log
 import android.util.Size
 import android.view.Surface
 import android.view.TextureView
@@ -45,7 +46,10 @@ data class CameraStreamConfiguration(
 
 data class SavedFrameFiles(
     val imageFile: File,
-    val metadataFile: File
+    val metadataFile: File,
+    val savedAtUtc: String,
+    val imageWidth: Int,
+    val imageHeight: Int
 )
 
 class Camera2Controller(
@@ -81,6 +85,12 @@ class Camera2Controller(
     @Volatile
     private var selectedPreviewSize: Size? = null
 
+    @Volatile
+    private var sensorOrientationDegrees: Int? = null
+
+    @Volatile
+    private var displayRotationDegrees: Int? = null
+
     private var textureView: TextureView? = null
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
@@ -105,6 +115,7 @@ class Camera2Controller(
             width: Int,
             height: Int
         ) {
+            displayRotationDegrees = textureView?.display?.rotation?.toDegrees()
             selectedPreviewSize?.let { configureTransform(textureView, it, width, height) }
         }
 
@@ -120,6 +131,7 @@ class Camera2Controller(
         if (released) return
         shouldRun = true
         textureView = view
+        displayRotationDegrees = view.display?.rotation?.toDegrees()
         view.surfaceTextureListener = surfaceTextureListener
 
         if (view.isAvailable) {
@@ -171,6 +183,8 @@ class Camera2Controller(
                 }
 
                 val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                sensorOrientationDegrees =
+                    characteristics[CameraCharacteristics.SENSOR_ORIENTATION]
                 val streamMap = characteristics[
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
                 ] ?: error("Camera $cameraId has no stream configuration map")
@@ -359,12 +373,27 @@ class Camera2Controller(
 
             if (saveRequested.compareAndSet(true, false)) {
                 try {
+                    val conversionStartedNs = System.nanoTime()
+                    Log.i(
+                        TAG,
+                        "Converting YUV_420_888 frame ${it.cropRect.width()}x" +
+                            "${it.cropRect.height()} at sensor timestamp ${it.timestamp} to NV21"
+                    )
+                    val nv21 = yuv420888ToNv21(it)
+                    check(nv21.isNotEmpty()) { "YUV-to-NV21 conversion produced no data" }
+                    Log.i(
+                        TAG,
+                        "YUV-to-NV21 conversion completed: ${nv21.size} bytes in " +
+                            "${(System.nanoTime() - conversionStartedNs) / 1_000_000} ms"
+                    )
                     val frame = PendingFrame(
                         width = it.cropRect.width(),
                         height = it.cropRect.height(),
                         capturedAtUtc = Instant.now().toString(),
-                        sensorTimestampNs = it.timestamp,
-                        nv21 = yuv420888ToNv21(it)
+                        sensorTimestampNs = it.timestamp.takeIf { timestamp -> timestamp > 0L },
+                        sensorOrientationDegrees = sensorOrientationDegrees,
+                        displayRotationDegrees = displayRotationDegrees,
+                        nv21 = nv21
                     )
                     saveExecutor.execute { saveFrame(frame) }
                 } catch (exception: Exception) {
@@ -385,6 +414,11 @@ class Camera2Controller(
             val imageFile = File(directory, "$baseName.jpg")
             val metadataFile = File(directory, "$baseName.json")
 
+            Log.i(
+                TAG,
+                "Encoding ${frame.width}x${frame.height} NV21 test frame as JPEG: " +
+                    imageFile.absolutePath
+            )
             FileOutputStream(imageFile).use { output ->
                 val compressed = YuvImage(
                     frame.nv21,
@@ -399,6 +433,10 @@ class Camera2Controller(
                 )
                 check(compressed) { "YUV-to-JPEG conversion failed" }
             }
+            check(imageFile.isFile && imageFile.length() > 0L) {
+                "JPEG output is empty: ${imageFile.absolutePath}"
+            }
+            Log.i(TAG, "JPEG test frame saved: ${imageFile.length()} bytes")
 
             metadataFile.writeText(
                 JSONObject().apply {
@@ -406,24 +444,46 @@ class Camera2Controller(
                     put("image_width", frame.width)
                     put("image_height", frame.height)
                     put("timestamp", frame.capturedAtUtc)
-                    put("sensor_timestamp_ns", frame.sensorTimestampNs)
+                    put("sensor_timestamp_ns", frame.sensorTimestampNs ?: JSONObject.NULL)
                     put(
                         "sensor_exposure_time_ns",
                         metadata?.exposureTimeNs ?: JSONObject.NULL
                     )
                     put("iso_sensitivity", metadata?.isoSensitivity ?: JSONObject.NULL)
                     put("focal_length_mm", metadata?.focalLengthMm ?: JSONObject.NULL)
+                    put(
+                        "sensor_orientation",
+                        frame.sensorOrientationDegrees ?: JSONObject.NULL
+                    )
+                    put(
+                        "display_rotation",
+                        frame.displayRotationDegrees ?: JSONObject.NULL
+                    )
+                    put("orientation_note", ORIENTATION_NOTE)
                 }.toString(JSON_INDENT_SPACES)
             )
+            check(metadataFile.isFile && metadataFile.length() > 0L) {
+                "Metadata output is empty: ${metadataFile.absolutePath}"
+            }
+            Log.i(TAG, "Test-frame metadata saved: ${metadataFile.absolutePath}")
 
-            SavedFrameFiles(imageFile = imageFile, metadataFile = metadataFile)
+            SavedFrameFiles(
+                imageFile = imageFile,
+                metadataFile = metadataFile,
+                savedAtUtc = Instant.now().toString(),
+                imageWidth = frame.width,
+                imageHeight = frame.height
+            )
+        }.onFailure {
+            Log.e(TAG, "Test-frame YUV/JPEG save failed", it)
         }
 
         saveBusy.set(false)
         notifyFrameSaveResult(result)
     }
 
-    private fun awaitCaptureMetadata(timestampNs: Long): FrameMetadata? {
+    private fun awaitCaptureMetadata(timestampNs: Long?): FrameMetadata? {
+        if (timestampNs == null) return null
         repeat(METADATA_WAIT_ATTEMPTS) {
             synchronized(metadataLock) {
                 captureMetadataByTimestamp.remove(timestampNs)?.let { return it }
@@ -525,7 +585,9 @@ private data class PendingFrame(
     val width: Int,
     val height: Int,
     val capturedAtUtc: String,
-    val sensorTimestampNs: Long,
+    val sensorTimestampNs: Long?,
+    val sensorOrientationDegrees: Int?,
+    val displayRotationDegrees: Int?,
     val nv21: ByteArray
 )
 
@@ -683,7 +745,16 @@ private fun cameraErrorName(error: Int): String = when (error) {
     else -> "UNKNOWN"
 }
 
+private fun Int.toDegrees(): Int = when (this) {
+    Surface.ROTATION_0 -> 0
+    Surface.ROTATION_90 -> 90
+    Surface.ROTATION_180 -> 180
+    Surface.ROTATION_270 -> 270
+    else -> 0
+}
+
 const val DEFAULT_CAMERA_ID = "0"
+const val ORIENTATION_NOTE = "Camera2 sensor-native landscape grid; not display-rotated"
 
 private val PREFERRED_ANALYSIS_SIZE = Size(4000, 3000)
 private val FALLBACK_ANALYSIS_SIZE = Size(1920, 1440)
@@ -696,3 +767,4 @@ private const val METADATA_WAIT_ATTEMPTS = 20
 private const val METADATA_WAIT_MILLIS = 10L
 private const val JPEG_QUALITY = 95
 private const val JSON_INDENT_SPACES = 2
+private const val TAG = "Camera2Controller"

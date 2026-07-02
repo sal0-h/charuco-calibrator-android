@@ -99,6 +99,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
     var frameCount by remember { mutableLongStateOf(0L) }
     var pipelineStatus by remember { mutableStateOf("Waiting for camera surface...") }
     var frameSaveMessage by remember { mutableStateOf<String?>(null) }
+    var latestSavedFrame by remember { mutableStateOf<SavedFrameFiles?>(null) }
 
     val cameraController = remember(applicationContext) {
         Camera2Controller(
@@ -110,8 +111,8 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             onFrameSaveResult = { result ->
                 frameSaveMessage = result.fold(
                     onSuccess = {
-                        "Saved image:\n${it.imageFile.absolutePath}\n" +
-                            "Metadata:\n${it.metadataFile.absolutePath}"
+                        latestSavedFrame = it
+                        "Test frame saved successfully"
                     },
                     onFailure = {
                         Log.e(TAG, "Unable to save test frame", it)
@@ -159,6 +160,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             frameCount = frameCount,
             pipelineStatus = pipelineStatus,
             frameSaveMessage = frameSaveMessage,
+            latestSavedFrame = latestSavedFrame,
             report = report,
             error = diagnosticsError,
             exportMessage = exportMessage,
@@ -205,6 +207,7 @@ private fun DiagnosticsPanel(
     frameCount: Long,
     pipelineStatus: String,
     frameSaveMessage: String?,
+    latestSavedFrame: SavedFrameFiles?,
     report: CameraReport?,
     error: String?,
     exportMessage: String?,
@@ -257,6 +260,21 @@ private fun DiagnosticsPanel(
                 text = it,
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        latestSavedFrame?.let {
+            Text(
+                text = buildString {
+                    appendLine("Latest saved frame")
+                    appendLine("  saved: ${it.savedAtUtc}")
+                    appendLine("  dimensions: ${it.imageWidth}x${it.imageHeight}")
+                    appendLine("  image: ${it.imageFile.absolutePath}")
+                    append("  metadata: ${it.metadataFile.absolutePath}")
+                },
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
