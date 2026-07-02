@@ -6,8 +6,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object OpenCvInitializer {
     private val initialized = AtomicBoolean(false)
+    private val runtimeLock = Any()
 
     fun isInitialized(): Boolean = initialized.get()
+
+    fun <T> withLock(block: () -> T): T = synchronized(runtimeLock, block)
 
     fun ensureInitialized(): Boolean {
         if (initialized.get()) return true

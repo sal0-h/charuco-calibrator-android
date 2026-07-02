@@ -10,6 +10,7 @@ import org.opencv.core.Mat
 import org.opencv.core.MatOfDouble
 import org.opencv.core.Size
 import org.opencv.core.TermCriteria
+import org.opencv.objdetect.CharucoDetector
 import java.io.File
 import java.time.Instant
 
@@ -27,8 +28,12 @@ data class CharucoCalibrationResult(
 
 class CharucoCalibrationEngine {
     private val board by lazy { BoardConfig.createBoard() }
+    private val detector by lazy { CharucoDetector(board) }
 
-    fun calibrate(frames: List<AcceptedFrameRecord>): CharucoCalibrationResult {
+    fun calibrate(
+        frames: List<AcceptedFrameRecord>,
+        onProgress: ((processed: Int, total: Int) -> Unit)? = null
+    ): CharucoCalibrationResult {
         if (frames.size < 3) {
             return CharucoCalibrationResult(
                 success = false,
@@ -52,8 +57,9 @@ class CharucoCalibrationEngine {
         val imagePointSets = ArrayList<Mat>()
         var failedFrames = 0
 
-        frames.forEach { frame ->
-            val correspondences = CharucoCorrespondenceBuilder.build(frame, board)
+        frames.forEachIndexed { index, frame ->
+            onProgress?.invoke(index + 1, frames.size)
+            val correspondences = CharucoCorrespondenceBuilder.build(frame, board, detector)
             if (correspondences == null) {
                 failedFrames += 1
                 Log.w(

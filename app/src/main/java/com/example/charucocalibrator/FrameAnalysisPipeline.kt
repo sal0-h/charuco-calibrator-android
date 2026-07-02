@@ -70,6 +70,9 @@ class FrameAnalysisPipeline(
     @Volatile
     private var autoCaptureEnabled = false
 
+    @Volatile
+    private var analysisPausedForCalibration = false
+
     fun submitFrame(image: Image, rawCount: Long, sensorTimestampNs: Long?) {
         if (released) return
         rawFrameCount = rawCount
@@ -137,12 +140,18 @@ class FrameAnalysisPipeline(
         isCalibrating = true
         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
 
+        analysisPausedForCalibration = true
         calibrationExecutor.execute {
             try {
                 imageWidth = frames.first().imageWidth
                 imageHeight = frames.first().imageHeight
                 Log.i(TAG, "Starting calibration with ${frames.size} accepted frames")
-                val result = calibrationEngine.calibrate(frames)
+                val result = OpenCvInitializer.withLock {
+                    calibrationEngine.calibrate(frames) { processed, total ->
+                        latestCalibrationStatus = "Calibrating frame $processed/$total..."
+                        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+                    }
+                }
                 latestCalibrationResult = result
                 latestCalibrationStatus = result.statusMessage
                 latestCalibrationPath = if (result.success) {
@@ -161,7 +170,11 @@ class FrameAnalysisPipeline(
                     TAG,
                     "Calibration finished: success=${result.success}, message=${result.statusMessage}"
                 )
+            } catch (exception: Exception) {
+                Log.e(TAG, "Calibration crashed", exception)
+                latestCalibrationStatus = "Calibration error: ${exception.message ?: exception.javaClass.simpleName}"
             } finally {
+                analysisPausedForCalibration = false
                 isCalibrating = false
                 publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
             }
@@ -177,6 +190,10 @@ class FrameAnalysisPipeline(
 
     private fun processGrayFrame(gray: Mat) {
         try {
+            if (analysisPausedForCalibration) {
+                return
+            }
+
             if (!OpenCvInitializer.isInitialized()) {
                 publishSnapshot(
                     processedCounter.get(),
@@ -186,8 +203,13 @@ class FrameAnalysisPipeline(
                 return
             }
 
-            val sharpness = computeLaplacianVariance(gray)
-            val detection = charucoDetector.detect(gray)
+            val frameResult = OpenCvInitializer.withLock {
+                val sharpness = computeLaplacianVariance(gray)
+                val detection = charucoDetector.detect(gray)
+                sharpness to detection
+            }
+            val sharpness = frameResult.first
+            val detection = frameResult.second
             imageWidth = gray.cols()
             imageHeight = gray.rows()
             latestSharpness = sharpness
