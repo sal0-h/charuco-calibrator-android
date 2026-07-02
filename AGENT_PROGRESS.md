@@ -24,7 +24,7 @@
 | E | Live ChArUco detection prototype | `Add live ChArUco detection prototype` |
 | F | Automatic frame acceptance | `Add automatic ChArUco frame acceptance` |
 | G | Calibration JSON export | `Add ChArUco calibration JSON export` |
-| H | Offline Python fallback script | pending |
+| H | Offline Python fallback script | `Add offline ChArUco calibration audit script` |
 | I | Review and cleanup | pending |
 
 ## ChArUco Android API feasibility (Milestone D)
@@ -59,7 +59,7 @@ Inspection method: downloaded the published AAR and inspected
 
 ## Build / lint status
 
-- Milestone G: `assembleDebug` and `lintDebug` passed.
+- Milestone H: `assembleDebug` and `lintDebug` passed.
 - OpenCV version: `org.opencv:opencv:4.13.0` from Maven Central.
 
 ## Commits and pushes

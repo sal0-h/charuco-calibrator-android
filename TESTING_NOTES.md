@@ -68,6 +68,24 @@ No broad storage permission is required.
 7. Verify metadata includes bbox fields, sharpness, counts, and `orientation_note`.
 8. Tap **Stop auto capture**, then **Clear accepted frames**, and confirm the counter resets.
 
+## Offline Python calibration audit
+
+Requirements: Python 3, `opencv-contrib-python` (or full OpenCV build with `cv2.aruco`).
+
+```bash
+pip install opencv-contrib-python
+python scripts/calibrate_charuco_from_android_frames.py \
+  --input-dir /path/to/accepted_frames \
+  --output-json /path/to/charuco_calibration_result.json \
+  --image-width 4000 \
+  --image-height 3000
+```
+
+- Reads `accepted_*.jpg` images from the Android `accepted_frames/` directory.
+- Uses adjacent `accepted_*.json` metadata when present for dimensions.
+- Exports the same JSON schema as the Android app.
+- Useful for auditing or recovering calibration if on-device export needs verification.
+
 ## Milestone G: on-device calibration on the S23 Ultra
 
 1. Collect at least 10–20 accepted frames with varied board poses.
