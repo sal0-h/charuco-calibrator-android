@@ -21,6 +21,7 @@ class FrameAnalysisPipeline(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processedCounter = AtomicLong(0)
     private val openCvReady = AtomicBoolean(false)
+    private val charucoDetector = CharucoFrameDetector()
 
     @Volatile
     private var lastProcessTimeNs = 0L
@@ -36,13 +37,16 @@ class FrameAnalysisPipeline(
     @Volatile
     private var latestSharpness: Double? = null
 
+    @Volatile
+    private var latestDetection: DetectionResult = DetectionResult.idle()
+
     fun submitFrame(image: Image, rawCount: Long) {
         if (released) return
         rawFrameCount = rawCount
 
         val now = System.nanoTime()
         if (now - lastProcessTimeNs < MIN_PROCESS_INTERVAL_NS) {
-            publishSnapshot(processedCounter.get(), latestSharpness)
+            publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
             return
         }
         lastProcessTimeNs = now
@@ -51,7 +55,7 @@ class FrameAnalysisPipeline(
             YuvToGrayMat.fromYuv420888(image)
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to convert YUV frame to grayscale", exception)
-            publishSnapshot(processedCounter.get(), null)
+            publishSnapshot(processedCounter.get(), null, DetectionResult.failure("grayscale_conversion_failed"))
             return
         }
 
@@ -72,15 +76,17 @@ class FrameAnalysisPipeline(
     private fun processGrayFrame(gray: Mat) {
         try {
             if (!ensureOpenCv()) {
-                publishSnapshot(processedCounter.get(), null)
+                publishSnapshot(processedCounter.get(), null, DetectionResult.failure("opencv_not_initialized"))
                 return
             }
 
             val sharpness = computeLaplacianVariance(gray)
+            val detection = charucoDetector.detect(gray)
             latestSharpness = sharpness
+            latestDetection = detection
             val processed = processedCounter.incrementAndGet()
             updateProcessingFps()
-            publishSnapshot(processed, sharpness)
+            publishSnapshot(processed, sharpness, detection)
         } finally {
             gray.release()
         }
@@ -124,12 +130,21 @@ class FrameAnalysisPipeline(
         return (processTimestampsNs.size - 1) * 1_000_000_000.0 / durationNs
     }
 
-    private fun publishSnapshot(processedCount: Long, sharpness: Double?) {
+    private fun publishSnapshot(
+        processedCount: Long,
+        sharpness: Double?,
+        detection: DetectionResult
+    ) {
         val snapshot = FrameAnalysisSnapshot(
             rawFrameCount = rawFrameCount,
             processedFrameCount = processedCount,
             sharpness = sharpness,
-            processingFps = currentProcessingFps()
+            processingFps = currentProcessingFps(),
+            markerCount = detection.markerCount,
+            charucoCornerCount = detection.charucoCornerCount,
+            detectionStatus = detection.status,
+            rejectionReason = detection.rejectionReason,
+            bboxAreaRatio = detection.bbox?.areaRatio
         )
         mainHandler.post {
             if (!released) onSnapshot(snapshot)

@@ -247,7 +247,7 @@ private fun DiagnosticsPanel(
                             snapshot.sharpness?.let { "%.1f".format(it) } ?: "n/a"
                         }"
                     )
-                    append(
+                    appendLine(
                         "processing FPS: ${
                             if (snapshot.processingFps > 0.0) {
                                 "%.1f".format(snapshot.processingFps)
@@ -256,6 +256,13 @@ private fun DiagnosticsPanel(
                             }
                         }"
                     )
+                    appendLine("markers: ${snapshot.markerCount}")
+                    appendLine("charuco corners: ${snapshot.charucoCornerCount}")
+                    appendLine("detection: ${snapshot.detectionStatus}")
+                    snapshot.rejectionReason?.let { appendLine("rejection: $it") }
+                    snapshot.bboxAreaRatio?.let {
+                        append("bbox area ratio: ${"%.3f".format(it)}")
+                    }
                 }
             },
             color = Color.White,

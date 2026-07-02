@@ -21,7 +21,7 @@
 | B | Saved frame validation metadata | `95c81f1` |
 | C | OpenCV dependency and sharpness processing | `Add OpenCV frame processing pipeline` |
 | D | ChArUco API feasibility check | `Document ChArUco Android API feasibility` |
-| E | Live ChArUco detection prototype | pending |
+| E | Live ChArUco detection prototype | `Add live ChArUco detection prototype` |
 | F | Automatic frame acceptance | pending |
 | G | Calibration JSON export | pending |
 | H | Offline Python fallback script | pending |
@@ -59,13 +59,13 @@ Inspection method: downloaded the published AAR and inspected
 
 ## Build / lint status
 
-- Milestone D: `assembleDebug` and `lintDebug` passed.
+- Milestone E: `assembleDebug` and `lintDebug` passed.
 - OpenCV version: `org.opencv:opencv:4.13.0` from Maven Central.
 
 ## Commits and pushes
 
 - `Add OpenCV frame processing pipeline` — pushed to `origin/main`.
-- `Document ChArUco Android API feasibility` — pending push.
+- `Document ChArUco Android API feasibility` — pushed to `origin/main`.
 
 ## Known limitations
 
@@ -74,8 +74,10 @@ Inspection method: downloaded the published AAR and inspected
 - Saved JPEGs remain in the sensor-native landscape orientation and do not
   contain display-rotation EXIF transforms.
 
+- ChArUco live detection uses analysis-frame coordinates; no preview overlay is drawn.
+- Preview scaling/cropping is display-only and does not rotate analysis frames.
+
 ## Manual S23 Ultra tests still needed
 
-- Confirm sharpness values change when focusing on the ChArUco board vs a blank wall.
-- Confirm processed-frame counter advances at roughly 3–5 FPS while preview runs.
-- Confirm existing test-frame save, diagnostics export, and camera report still work.
+- Point the printed ChArUco board at camera `0` and confirm live marker/corner counts.
+- Confirm rejection reasons when the board is absent or out of focus.

@@ -48,6 +48,15 @@ No broad storage permission is required.
 7. Tap **Save test frame** and confirm JPEG + metadata export still works.
 8. Export the camera report and confirm diagnostics still work.
 
+## Milestone E: live ChArUco detection on the S23 Ultra
+
+1. Print the 7x10 ChArUco board (`DICT_5X5_100`, 25 mm squares, 18 mm markers).
+2. Launch the app and point camera `0` at the board under good lighting.
+3. Confirm `markers` and `charuco corners` increase when the board is visible.
+4. Confirm `detection` becomes `detected` with at least 8 ChArUco corners.
+5. When the board is absent, confirm a rejection reason appears.
+6. Confirm sharpness, test-frame save, and diagnostics export still work.
+
 ## Future end-to-end board test
 
 Use the printed ChArUco board with 7x10 squares, 0.025 m square length,
