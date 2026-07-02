@@ -50,35 +50,29 @@ class CharucoCalibrationEngine {
 
         val objectPointSets = ArrayList<Mat>()
         val imagePointSets = ArrayList<Mat>()
+        var failedFrames = 0
 
         frames.forEach { frame ->
-            val objPoints = Mat()
-            val imgPoints = Mat()
-            try {
-                board.matchImagePoints(
-                    frame.markerCorners,
-                    frame.markerIds,
-                    objPoints,
-                    imgPoints
+            val correspondences = CharucoCorrespondenceBuilder.build(frame, board)
+            if (correspondences == null) {
+                failedFrames += 1
+                Log.w(
+                    TAG,
+                    "No correspondences for ${frame.imageFile.name} " +
+                        "(charuco_corners=${frame.charucoCornerCount}, markers=${frame.markerCount})"
                 )
-                if (objPoints.rows() >= AcceptanceConfig.MIN_CHARUCO_CORNERS) {
-                    objectPointSets.add(objPoints)
-                    imagePointSets.add(imgPoints)
-                } else {
-                    objPoints.release()
-                    imgPoints.release()
-                }
-            } catch (exception: Exception) {
-                Log.w(TAG, "matchImagePoints failed for ${frame.imageFile.name}", exception)
-                objPoints.release()
-                imgPoints.release()
+            } else {
+                objectPointSets.add(correspondences.objectPoints)
+                imagePointSets.add(correspondences.imagePoints)
             }
         }
 
         if (objectPointSets.size < 3) {
             return CharucoCalibrationResult(
                 success = false,
-                statusMessage = "Only ${objectPointSets.size} frames produced valid correspondences"
+                statusMessage =
+                    "Only ${objectPointSets.size}/${frames.size} frames produced valid correspondences " +
+                    "($failedFrames failed matching)"
             )
         }
 
