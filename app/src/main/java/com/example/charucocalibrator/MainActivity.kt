@@ -5,18 +5,13 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
+import android.view.TextureView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,6 +20,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,11 +37,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.charucocalibrator.ui.theme.CharucoCalibratorTheme
 import kotlinx.coroutines.Dispatchers
@@ -88,10 +88,39 @@ private fun CameraApp(modifier: Modifier = Modifier) {
 @Composable
 private fun CameraScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val applicationContext = context.applicationContext
     val coroutineScope = rememberCoroutineScope()
     var report by remember { mutableStateOf<CameraReport?>(null) }
     var diagnosticsError by remember { mutableStateOf<String?>(null) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var streamConfiguration by remember {
+        mutableStateOf<CameraStreamConfiguration?>(null)
+    }
+    var frameCount by remember { mutableLongStateOf(0L) }
+    var pipelineStatus by remember { mutableStateOf("Waiting for camera surface...") }
+    var frameSaveMessage by remember { mutableStateOf<String?>(null) }
+
+    val cameraController = remember(applicationContext) {
+        Camera2Controller(
+            context = applicationContext,
+            cameraId = DEFAULT_CAMERA_ID,
+            onStreamConfigured = { streamConfiguration = it },
+            onFrameCountChanged = { frameCount = it },
+            onStatusChanged = { pipelineStatus = it },
+            onFrameSaveResult = { result ->
+                frameSaveMessage = result.fold(
+                    onSuccess = {
+                        "Saved image:\n${it.imageFile.absolutePath}\n" +
+                            "Metadata:\n${it.metadataFile.absolutePath}"
+                    },
+                    onFailure = {
+                        Log.e(TAG, "Unable to save test frame", it)
+                        "Frame save failed: ${it.message ?: it.javaClass.simpleName}"
+                    }
+                )
+            }
+        )
+    }
 
     LaunchedEffect(context) {
         val result = withContext(Dispatchers.Default) {
@@ -110,9 +139,12 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
     }
 
     Box(modifier = modifier.background(Color.Black)) {
-        CameraPreview(modifier = Modifier.fillMaxSize())
+        Camera2Preview(
+            controller = cameraController,
+            modifier = Modifier.fillMaxSize()
+        )
         Text(
-            text = "Camera running",
+            text = "Camera2 • camera_id $DEFAULT_CAMERA_ID",
             color = Color.White,
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier
@@ -123,9 +155,20 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         )
         DiagnosticsPanel(
+            streamConfiguration = streamConfiguration,
+            frameCount = frameCount,
+            pipelineStatus = pipelineStatus,
+            frameSaveMessage = frameSaveMessage,
             report = report,
             error = diagnosticsError,
             exportMessage = exportMessage,
+            onSaveTestFrame = {
+                frameSaveMessage = if (cameraController.requestSaveNextFrame()) {
+                    "Waiting for the next YUV frame..."
+                } else {
+                    "Camera is not ready or a frame save is already in progress"
+                }
+            },
             onExport = {
                 report?.let { currentReport ->
                     coroutineScope.launch {
@@ -151,16 +194,21 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .fillMaxHeight(0.58f)
+                .fillMaxHeight(0.70f)
         )
     }
 }
 
 @Composable
 private fun DiagnosticsPanel(
+    streamConfiguration: CameraStreamConfiguration?,
+    frameCount: Long,
+    pipelineStatus: String,
+    frameSaveMessage: String?,
     report: CameraReport?,
     error: String?,
     exportMessage: String?,
+    onSaveTestFrame: () -> Unit,
     onExport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -171,9 +219,52 @@ private fun DiagnosticsPanel(
             .padding(12.dp)
     ) {
         Text(
-            text = "Camera2 diagnostics",
+            text = "Calibration capture",
             color = Color.White,
             style = MaterialTheme.typography.titleSmall
+        )
+        Text(
+            text = buildString {
+                appendLine("camera_id: ${streamConfiguration?.cameraId ?: DEFAULT_CAMERA_ID}")
+                appendLine(
+                    "analysis: ${streamConfiguration?.analysisSize?.display() ?: "configuring"}"
+                )
+                appendLine(
+                    "preview: ${streamConfiguration?.previewSize?.display() ?: "configuring"}"
+                )
+                append("frames: $frameCount")
+            },
+            color = Color.White,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        Text(
+            text = pipelineStatus,
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+        Button(
+            onClick = onSaveTestFrame,
+            enabled = streamConfiguration != null,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Save test frame")
+        }
+        frameSaveMessage?.let {
+            Text(
+                text = it,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        Text(
+            text = "Camera2 diagnostics",
+            color = Color.White,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 8.dp)
         )
         Text(
             text = when {
@@ -209,53 +300,35 @@ private fun DiagnosticsPanel(
 }
 
 @Composable
-private fun CameraPreview(modifier: Modifier = Modifier) {
+private fun Camera2Preview(
+    controller: Camera2Controller,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val previewView = remember(context) {
-        PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
+    val textureView = remember(context) { TextureView(context) }
+
+    DisposableEffect(lifecycleOwner, controller, textureView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> controller.start(textureView)
+                Lifecycle.Event.ON_PAUSE -> controller.stop()
+                else -> Unit
+            }
         }
-    }
-
-    DisposableEffect(context, lifecycleOwner, previewView) {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        var cameraProvider: ProcessCameraProvider? = null
-        var disposed = false
-
-        cameraProviderFuture.addListener(
-            {
-                try {
-                    val provider = cameraProviderFuture.get()
-                    cameraProvider = provider
-
-                    if (!disposed) {
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
-
-                        provider.unbindAll()
-                        provider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview
-                        )
-                    }
-                } catch (exception: Exception) {
-                    Log.e(TAG, "Unable to bind camera preview", exception)
-                }
-            },
-            ContextCompat.getMainExecutor(context)
-        )
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            controller.start(textureView)
+        }
 
         onDispose {
-            disposed = true
-            cameraProvider?.unbindAll()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            controller.release()
         }
     }
 
     AndroidView(
-        factory = { previewView },
+        factory = { textureView },
         modifier = modifier
     )
 }
