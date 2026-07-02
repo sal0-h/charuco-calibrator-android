@@ -11,7 +11,7 @@ data class FrameAnalysisSnapshot(
     val rejectionReason: String? = null,
     val bboxAreaRatio: Double? = null,
     val acceptedFrameCount: Int = 0,
-    val maxAcceptedFrames: Int = 50,
+    val maxAcceptedFrames: Int = AcceptanceConfig.MAX_ACCEPTED_FRAMES,
     val lastAcceptanceReason: String? = null,
     val autoCaptureActive: Boolean = false,
     val calibrationStatus: String? = null,

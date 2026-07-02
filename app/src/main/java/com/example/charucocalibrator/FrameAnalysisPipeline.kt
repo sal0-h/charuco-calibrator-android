@@ -1,5 +1,6 @@
 package com.example.charucocalibrator
 
+import android.content.Context
 import android.media.Image
 import android.os.Handler
 import android.os.Looper
@@ -15,19 +16,27 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class FrameAnalysisPipeline(
+    context: Context,
+    private val cameraId: String,
     private val onSnapshot: (FrameAnalysisSnapshot) -> Unit
 ) {
+    private val applicationContext = context.applicationContext
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processedCounter = AtomicLong(0)
     private val openCvReady = AtomicBoolean(false)
     private val charucoDetector = CharucoFrameDetector()
+    private val frameAcceptance = FrameAcceptanceController()
+    private val acceptedFrameStore = AcceptedFrameStore(applicationContext)
 
     @Volatile
     private var lastProcessTimeNs = 0L
 
     @Volatile
     private var rawFrameCount = 0L
+
+    @Volatile
+    private var latestSensorTimestampNs: Long? = null
 
     private val processTimestampsNs = ArrayDeque<Long>()
 
@@ -40,9 +49,13 @@ class FrameAnalysisPipeline(
     @Volatile
     private var latestDetection: DetectionResult = DetectionResult.idle()
 
-    fun submitFrame(image: Image, rawCount: Long) {
+    @Volatile
+    private var autoCaptureEnabled = false
+
+    fun submitFrame(image: Image, rawCount: Long, sensorTimestampNs: Long?) {
         if (released) return
         rawFrameCount = rawCount
+        latestSensorTimestampNs = sensorTimestampNs
 
         val now = System.nanoTime()
         if (now - lastProcessTimeNs < MIN_PROCESS_INTERVAL_NS) {
@@ -55,7 +68,11 @@ class FrameAnalysisPipeline(
             YuvToGrayMat.fromYuv420888(image)
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to convert YUV frame to grayscale", exception)
-            publishSnapshot(processedCounter.get(), null, DetectionResult.failure("grayscale_conversion_failed"))
+            publishSnapshot(
+                processedCounter.get(),
+                null,
+                DetectionResult.failure("grayscale_conversion_failed")
+            )
             return
         }
 
@@ -68,15 +85,37 @@ class FrameAnalysisPipeline(
         }
     }
 
+    fun startAutoCapture() {
+        autoCaptureEnabled = true
+        frameAcceptance.markAutoCaptureStarted()
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+    }
+
+    fun stopAutoCapture() {
+        autoCaptureEnabled = false
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+    }
+
+    fun clearAcceptedFrames() {
+        acceptedFrameStore.clear()
+        frameAcceptance.clearHistory()
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+    }
+
     fun release() {
         released = true
         analysisExecutor.shutdown()
+        acceptedFrameStore.clear()
     }
 
     private fun processGrayFrame(gray: Mat) {
         try {
             if (!ensureOpenCv()) {
-                publishSnapshot(processedCounter.get(), null, DetectionResult.failure("opencv_not_initialized"))
+                publishSnapshot(
+                    processedCounter.get(),
+                    null,
+                    DetectionResult.failure("opencv_not_initialized")
+                )
                 return
             }
 
@@ -86,6 +125,30 @@ class FrameAnalysisPipeline(
             latestDetection = detection
             val processed = processedCounter.incrementAndGet()
             updateProcessingFps()
+
+            if (autoCaptureEnabled) {
+                val decision = frameAcceptance.evaluate(
+                    detection = detection,
+                    sharpness = sharpness,
+                    frameWidth = gray.cols(),
+                    frameHeight = gray.rows(),
+                    acceptedCount = acceptedFrameStore.count
+                )
+                if (decision.accepted) {
+                    acceptedFrameStore.saveFrame(
+                        gray = gray,
+                        cameraId = cameraId,
+                        sharpness = sharpness,
+                        detection = detection,
+                        sensorTimestampNs = latestSensorTimestampNs,
+                        reason = decision.message
+                    )
+                }
+            } else {
+                detection.charucoCorners?.release()
+                detection.charucoIds?.release()
+            }
+
             publishSnapshot(processed, sharpness, detection)
         } finally {
             gray.release()
@@ -144,7 +207,11 @@ class FrameAnalysisPipeline(
             charucoCornerCount = detection.charucoCornerCount,
             detectionStatus = detection.status,
             rejectionReason = detection.rejectionReason,
-            bboxAreaRatio = detection.bbox?.areaRatio
+            bboxAreaRatio = detection.bbox?.areaRatio,
+            acceptedFrameCount = acceptedFrameStore.count,
+            maxAcceptedFrames = AcceptanceConfig.MAX_ACCEPTED_FRAMES,
+            lastAcceptanceReason = frameAcceptance.lastDecisionMessage,
+            autoCaptureActive = autoCaptureEnabled
         )
         mainHandler.post {
             if (!released) onSnapshot(snapshot)

@@ -23,7 +23,9 @@ data class DetectionResult(
     val charucoCornerCount: Int,
     val status: String,
     val rejectionReason: String?,
-    val bbox: DetectionBoundingBox?
+    val bbox: DetectionBoundingBox?,
+    val charucoCorners: Mat? = null,
+    val charucoIds: Mat? = null
 ) {
     companion object {
         fun idle() = DetectionResult(
@@ -77,7 +79,13 @@ class CharucoFrameDetector {
                 )
             } else {
                 val bbox = computeCornerBoundingBox(charucoCorners, gray.cols(), gray.rows())
-                val status = if (cornerCount >= 8) "detected" else "insufficient_corners"
+                val status = if (cornerCount >= AcceptanceConfig.MIN_CHARUCO_CORNERS) {
+                    "detected"
+                } else {
+                    "insufficient_corners"
+                }
+                val clonedCorners = if (status == "detected") charucoCorners.clone() else null
+                val clonedIds = if (status == "detected") charucoIds.clone() else null
                 DetectionResult(
                     markerCount = markerCount,
                     charucoCornerCount = cornerCount,
@@ -85,9 +93,11 @@ class CharucoFrameDetector {
                     rejectionReason = if (status == "detected") {
                         null
                     } else {
-                        "charuco_corners=$cornerCount < 8"
+                        "charuco_corners=$cornerCount < ${AcceptanceConfig.MIN_CHARUCO_CORNERS}"
                     },
-                    bbox = bbox
+                    bbox = bbox,
+                    charucoCorners = clonedCorners,
+                    charucoIds = clonedIds
                 )
             }
         } catch (exception: Exception) {

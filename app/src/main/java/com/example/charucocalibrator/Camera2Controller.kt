@@ -69,7 +69,11 @@ class Camera2Controller(
     private val imageThread = HandlerThread("Camera2Images").apply { start() }
     private val imageHandler = Handler(imageThread.looper)
     private val saveExecutor = Executors.newSingleThreadExecutor()
-    private val frameAnalysisPipeline = FrameAnalysisPipeline(onAnalysisSnapshot)
+    private val frameAnalysisPipeline = FrameAnalysisPipeline(
+        context = applicationContext,
+        cameraId = cameraId,
+        onSnapshot = onAnalysisSnapshot
+    )
 
     private val frameCounter = AtomicLong(0)
     private val streamActive = AtomicBoolean(false)
@@ -173,6 +177,18 @@ class Camera2Controller(
         ) return false
         saveRequested.set(true)
         return true
+    }
+
+    fun startAutoCapture() {
+        frameAnalysisPipeline.startAutoCapture()
+    }
+
+    fun stopAutoCapture() {
+        frameAnalysisPipeline.stopAutoCapture()
+    }
+
+    fun clearAcceptedFrames() {
+        frameAnalysisPipeline.clearAcceptedFrames()
     }
 
     private fun openCamera(surfaceTexture: SurfaceTexture, viewWidth: Int, viewHeight: Int) {
@@ -373,7 +389,7 @@ class Camera2Controller(
         image.use {
             val count = frameCounter.incrementAndGet()
             notifyFrameCount(count)
-            frameAnalysisPipeline.submitFrame(it, count)
+            frameAnalysisPipeline.submitFrame(it, count, it.timestamp.takeIf { ts -> ts > 0L })
 
             if (saveRequested.compareAndSet(true, false)) {
                 try {

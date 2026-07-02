@@ -57,6 +57,17 @@ No broad storage permission is required.
 5. When the board is absent, confirm a rejection reason appears.
 6. Confirm sharpness, test-frame save, and diagnostics export still work.
 
+## Milestone F: automatic frame acceptance on the S23 Ultra
+
+1. Print and mount the ChArUco board where camera `0` can see it.
+2. Tap **Start auto capture**.
+3. Move the phone to varied poses with the board in frame and in focus.
+4. Confirm `accepted` count increases and stops at 50.
+5. Confirm `last decision` alternates between accepted and rejected reasons.
+6. Inspect `.../files/accepted_frames/` for JPEG + JSON pairs.
+7. Verify metadata includes bbox fields, sharpness, counts, and `orientation_note`.
+8. Tap **Stop auto capture**, then **Clear accepted frames**, and confirm the counter resets.
+
 ## Future end-to-end board test
 
 Use the printed ChArUco board with 7x10 squares, 0.025 m square length,

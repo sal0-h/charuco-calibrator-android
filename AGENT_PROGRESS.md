@@ -22,7 +22,7 @@
 | C | OpenCV dependency and sharpness processing | `Add OpenCV frame processing pipeline` |
 | D | ChArUco API feasibility check | `Document ChArUco Android API feasibility` |
 | E | Live ChArUco detection prototype | `Add live ChArUco detection prototype` |
-| F | Automatic frame acceptance | pending |
+| F | Automatic frame acceptance | `Add automatic ChArUco frame acceptance` |
 | G | Calibration JSON export | pending |
 | H | Offline Python fallback script | pending |
 | I | Review and cleanup | pending |
@@ -59,13 +59,13 @@ Inspection method: downloaded the published AAR and inspected
 
 ## Build / lint status
 
-- Milestone E: `assembleDebug` and `lintDebug` passed.
+- Milestone F: `assembleDebug` and `lintDebug` passed.
 - OpenCV version: `org.opencv:opencv:4.13.0` from Maven Central.
 
 ## Commits and pushes
 
 - `Add OpenCV frame processing pipeline` — pushed to `origin/main`.
-- `Document ChArUco Android API feasibility` — pushed to `origin/main`.
+- `Add live ChArUco detection prototype` — pushed to `origin/main`.
 
 ## Known limitations
 

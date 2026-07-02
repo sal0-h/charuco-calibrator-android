@@ -196,6 +196,9 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
                     }
                 }
             },
+            onStartAutoCapture = { cameraController.startAutoCapture() },
+            onStopAutoCapture = { cameraController.stopAutoCapture() },
+            onClearAcceptedFrames = { cameraController.clearAcceptedFrames() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -217,6 +220,9 @@ private fun DiagnosticsPanel(
     exportMessage: String?,
     onSaveTestFrame: () -> Unit,
     onExport: () -> Unit,
+    onStartAutoCapture: () -> Unit,
+    onStopAutoCapture: () -> Unit,
+    onClearAcceptedFrames: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -282,6 +288,44 @@ private fun DiagnosticsPanel(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Save test frame")
+        }
+        analysisSnapshot?.let { snapshot ->
+            Text(
+                text = buildString {
+                    appendLine("accepted: ${snapshot.acceptedFrameCount}/${snapshot.maxAcceptedFrames}")
+                    appendLine("auto capture: ${if (snapshot.autoCaptureActive) "on" else "off"}")
+                    snapshot.lastAcceptanceReason?.let { appendLine("last decision: $it") }
+                    snapshot.bboxAreaRatio?.let {
+                        append("coverage score: ${"%.3f".format(it)}")
+                    }
+                },
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        Button(
+            onClick = onStartAutoCapture,
+            enabled = streamConfiguration != null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+        ) {
+            Text("Start auto capture")
+        }
+        Button(
+            onClick = onStopAutoCapture,
+            enabled = streamConfiguration != null,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Stop auto capture")
+        }
+        Button(
+            onClick = onClearAcceptedFrames,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Clear accepted frames")
         }
         frameSaveMessage?.let {
             Text(
