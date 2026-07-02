@@ -68,6 +68,16 @@ No broad storage permission is required.
 7. Verify metadata includes bbox fields, sharpness, counts, and `orientation_note`.
 8. Tap **Stop auto capture**, then **Clear accepted frames**, and confirm the counter resets.
 
+## Milestone G: on-device calibration on the S23 Ultra
+
+1. Collect at least 10–20 accepted frames with varied board poses.
+2. Tap **Run calibration**.
+3. Confirm calibration status shows success and a reprojection error.
+4. Confirm `fx/fy/cx/cy` values appear in the UI.
+5. Open `charuco_calibration_result.json` in the app files directory.
+6. Verify JSON fields: `camera_matrix`, distortion coefficients, board config,
+   `orientation_note`, and `accepted_frames`.
+
 ## Future end-to-end board test
 
 Use the printed ChArUco board with 7x10 squares, 0.025 m square length,

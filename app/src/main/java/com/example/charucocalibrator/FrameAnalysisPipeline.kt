@@ -28,6 +28,22 @@ class FrameAnalysisPipeline(
     private val charucoDetector = CharucoFrameDetector()
     private val frameAcceptance = FrameAcceptanceController()
     private val acceptedFrameStore = AcceptedFrameStore(applicationContext)
+    private val calibrationEngine = CharucoCalibrationEngine()
+
+    @Volatile
+    private var latestCalibrationStatus: String? = null
+
+    @Volatile
+    private var latestCalibrationPath: String? = null
+
+    @Volatile
+    private var latestCalibrationResult: CharucoCalibrationResult? = null
+
+    @Volatile
+    private var imageWidth = 0
+
+    @Volatile
+    private var imageHeight = 0
 
     @Volatile
     private var lastProcessTimeNs = 0L
@@ -102,6 +118,38 @@ class FrameAnalysisPipeline(
         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
     }
 
+    fun runCalibration() {
+        analysisExecutor.execute {
+            val frames = acceptedFrameStore.frames
+            if (frames.isEmpty()) {
+                latestCalibrationStatus = "No accepted frames to calibrate"
+                latestCalibrationPath = null
+                latestCalibrationResult = null
+                publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+                return@execute
+            }
+
+            imageWidth = frames.first().imageWidth
+            imageHeight = frames.first().imageHeight
+            val result = calibrationEngine.calibrate(frames)
+            latestCalibrationResult = result
+            latestCalibrationStatus = result.statusMessage
+            latestCalibrationPath = if (result.success) {
+                calibrationEngine.exportResult(
+                    context = applicationContext,
+                    result = result,
+                    cameraId = cameraId,
+                    imageWidth = imageWidth,
+                    imageHeight = imageHeight,
+                    acceptedFrames = frames.size
+                )?.absolutePath
+            } else {
+                null
+            }
+            publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+        }
+    }
+
     fun release() {
         released = true
         analysisExecutor.shutdown()
@@ -121,6 +169,8 @@ class FrameAnalysisPipeline(
 
             val sharpness = computeLaplacianVariance(gray)
             val detection = charucoDetector.detect(gray)
+            imageWidth = gray.cols()
+            imageHeight = gray.rows()
             latestSharpness = sharpness
             latestDetection = detection
             val processed = processedCounter.incrementAndGet()
@@ -211,7 +261,14 @@ class FrameAnalysisPipeline(
             acceptedFrameCount = acceptedFrameStore.count,
             maxAcceptedFrames = AcceptanceConfig.MAX_ACCEPTED_FRAMES,
             lastAcceptanceReason = frameAcceptance.lastDecisionMessage,
-            autoCaptureActive = autoCaptureEnabled
+            autoCaptureActive = autoCaptureEnabled,
+            calibrationStatus = latestCalibrationStatus,
+            calibrationReprojectionError = latestCalibrationResult?.reprojectionErrorPx,
+            calibrationFx = latestCalibrationResult?.fx,
+            calibrationFy = latestCalibrationResult?.fy,
+            calibrationCx = latestCalibrationResult?.cx,
+            calibrationCy = latestCalibrationResult?.cy,
+            calibrationOutputPath = latestCalibrationPath
         )
         mainHandler.post {
             if (!released) onSnapshot(snapshot)

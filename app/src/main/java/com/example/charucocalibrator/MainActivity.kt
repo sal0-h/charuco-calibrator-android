@@ -199,6 +199,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             onStartAutoCapture = { cameraController.startAutoCapture() },
             onStopAutoCapture = { cameraController.stopAutoCapture() },
             onClearAcceptedFrames = { cameraController.clearAcceptedFrames() },
+            onRunCalibration = { cameraController.runCalibration() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -223,6 +224,7 @@ private fun DiagnosticsPanel(
     onStartAutoCapture: () -> Unit,
     onStopAutoCapture: () -> Unit,
     onClearAcceptedFrames: () -> Unit,
+    onRunCalibration: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -326,6 +328,48 @@ private fun DiagnosticsPanel(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Clear accepted frames")
+        }
+        Button(
+            onClick = onRunCalibration,
+            enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Run calibration")
+        }
+        analysisSnapshot?.calibrationStatus?.let { status ->
+            Text(
+                text = buildString {
+                    appendLine("calibration: $status")
+                    analysisSnapshot.calibrationReprojectionError?.let {
+                        appendLine("reprojection error: ${"%.3f".format(it)} px")
+                    }
+                    if (
+                        analysisSnapshot.calibrationFx != null &&
+                        analysisSnapshot.calibrationFy != null &&
+                        analysisSnapshot.calibrationCx != null &&
+                        analysisSnapshot.calibrationCy != null
+                    ) {
+                        appendLine(
+                            "fx/fy/cx/cy: ${
+                                "%.1f".format(analysisSnapshot.calibrationFx)
+                            } / ${
+                                "%.1f".format(analysisSnapshot.calibrationFy)
+                            } / ${
+                                "%.1f".format(analysisSnapshot.calibrationCx)
+                            } / ${
+                                "%.1f".format(analysisSnapshot.calibrationCy)
+                            }"
+                        )
+                    }
+                    analysisSnapshot.calibrationOutputPath?.let {
+                        append("output: $it")
+                    }
+                },
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
         frameSaveMessage?.let {
             Text(

@@ -191,6 +191,10 @@ class Camera2Controller(
         frameAnalysisPipeline.clearAcceptedFrames()
     }
 
+    fun runCalibration() {
+        frameAnalysisPipeline.runCalibration()
+    }
+
     private fun openCamera(surfaceTexture: SurfaceTexture, viewWidth: Int, viewHeight: Int) {
         cameraHandler.post {
             if (!shouldRun || released || cameraDevice != null || openRequested) return@post
