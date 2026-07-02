@@ -14,15 +14,20 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -239,218 +244,217 @@ private fun DiagnosticsPanel(
     onRunCalibration: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val scrollState = rememberScrollState()
+    val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+    val label = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
+
     Column(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.82f))
+            .background(Color.Black.copy(alpha = 0.88f))
             .navigationBarsPadding()
-            .padding(12.dp)
     ) {
         Text(
             text = "Calibration capture",
             color = Color.White,
-            style = MaterialTheme.typography.titleSmall
-        )
-        Text(
-            text = buildString {
-                appendLine("camera_id: ${streamConfiguration?.cameraId ?: DEFAULT_CAMERA_ID}")
-                appendLine(
-                    "analysis: ${streamConfiguration?.analysisSize?.display() ?: "configuring"}"
-                )
-                appendLine(
-                    "preview: ${streamConfiguration?.previewSize?.display() ?: "configuring"}"
-                )
-                appendLine("raw frames: $frameCount")
-                analysisSnapshot?.let { snapshot ->
-                    appendLine("processed frames: ${snapshot.processedFrameCount}")
-                    appendLine(
-                        "sharpness: ${
-                            snapshot.sharpness?.let { "%.1f".format(it) } ?: "n/a"
-                        }"
-                    )
-                    appendLine(
-                        "processing FPS: ${
-                            if (snapshot.processingFps > 0.0) {
-                                "%.1f".format(snapshot.processingFps)
-                            } else {
-                                "n/a"
-                            }
-                        }"
-                    )
-                    appendLine("markers: ${snapshot.markerCount}")
-                    appendLine("charuco corners: ${snapshot.charucoCornerCount}")
-                    appendLine("detection: ${snapshot.detectionStatus}")
-                    snapshot.rejectionReason?.let { appendLine("rejection: $it") }
-                    snapshot.bboxAreaRatio?.let {
-                        appendLine("bbox area ratio: ${"%.3f".format(it)}")
-                    }
-                    snapshot.calibrationStatus?.let { appendLine("calibration: $it") }
-                }
-            },
-            color = Color.White,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier.padding(top = 4.dp)
-        )
-        Text(
-            text = pipelineStatus,
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(vertical = 4.dp)
-        )
-        Button(
-            onClick = onSaveTestFrame,
-            enabled = streamConfiguration != null,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Save test frame")
-        }
-        analysisSnapshot?.let { snapshot ->
-            Text(
-                text = buildString {
-                    appendLine("accepted: ${snapshot.acceptedFrameCount}/${snapshot.maxAcceptedFrames}")
-                    appendLine("auto capture: ${if (snapshot.autoCaptureActive) "on" else "off"}")
-                    snapshot.lastAcceptanceReason?.let { appendLine("last decision: $it") }
-                    snapshot.bboxAreaRatio?.let {
-                        append("coverage score: ${"%.3f".format(it)}")
-                    }
-                },
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-        Button(
-            onClick = onStartAutoCapture,
-            enabled = streamConfiguration != null,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
-        ) {
-            Text("Start auto capture")
-        }
-        Button(
-            onClick = onStopAutoCapture,
-            enabled = streamConfiguration != null,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Stop auto capture")
-        }
-        Button(
-            onClick = onClearAcceptedFrames,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Clear accepted frames")
-        }
-        Button(
-            onClick = onRunCalibration,
-            enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3 &&
-                analysisSnapshot?.isCalibrating != true,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                if (analysisSnapshot?.isCalibrating == true) {
-                    "Calibrating..."
-                } else {
-                    "Run calibration"
-                }
-            )
-        }
-        analysisSnapshot?.calibrationStatus?.let { status ->
-            Text(
-                text = buildString {
-                    appendLine("calibration: $status")
-                    analysisSnapshot.calibrationReprojectionError?.let {
-                        appendLine("reprojection error: ${"%.3f".format(it)} px")
-                    }
-                    if (
-                        analysisSnapshot.calibrationFx != null &&
-                        analysisSnapshot.calibrationFy != null &&
-                        analysisSnapshot.calibrationCx != null &&
-                        analysisSnapshot.calibrationCy != null
-                    ) {
-                        appendLine(
-                            "fx/fy/cx/cy: ${
-                                "%.1f".format(analysisSnapshot.calibrationFx)
-                            } / ${
-                                "%.1f".format(analysisSnapshot.calibrationFy)
-                            } / ${
-                                "%.1f".format(analysisSnapshot.calibrationCx)
-                            } / ${
-                                "%.1f".format(analysisSnapshot.calibrationCy)
-                            }"
-                        )
-                    }
-                    analysisSnapshot.calibrationOutputPath?.let {
-                        append("output: $it")
-                    }
-                },
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-        frameSaveMessage?.let {
-            Text(
-                text = it,
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-        latestSavedFrame?.let {
-            Text(
-                text = buildString {
-                    appendLine("Latest saved frame")
-                    appendLine("  saved: ${it.savedAtUtc}")
-                    appendLine("  dimensions: ${it.imageWidth}x${it.imageHeight}")
-                    appendLine("  image: ${it.imageFile.absolutePath}")
-                    append("  metadata: ${it.metadataFile.absolutePath}")
-                },
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-        Text(
-            text = "Camera2 diagnostics",
-            color = Color.White,
             style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(top = 8.dp)
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
         )
-        Text(
-            text = when {
-                error != null -> "Diagnostics failed: $error"
-                report == null -> "Loading camera characteristics..."
-                else -> report.toDisplayText()
-            },
-            color = if (error == null) Color.White else MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
-                .verticalScroll(rememberScrollState())
-        )
-        Button(
-            onClick = onExport,
-            enabled = report != null,
-            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 12.dp)
+                .padding(bottom = 12.dp)
         ) {
-            Text("Export camera report")
-        }
-        exportMessage?.let {
             Text(
-                text = it,
+                text = buildLiveStatsText(streamConfiguration, frameCount, analysisSnapshot),
+                color = Color.White,
+                style = mono
+            )
+            Text(
+                text = pipelineStatus,
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(top = 6.dp)
+                modifier = Modifier.padding(vertical = 6.dp)
             )
+
+            SectionLabel("Actions")
+            Button(
+                onClick = onSaveTestFrame,
+                enabled = streamConfiguration != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save test frame")
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onStartAutoCapture,
+                    enabled = streamConfiguration != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Start auto")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onStopAutoCapture,
+                    enabled = streamConfiguration != null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Stop auto")
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onClearAcceptedFrames,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Clear")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onRunCalibration,
+                    enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3 &&
+                        analysisSnapshot?.isCalibrating != true,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        if (analysisSnapshot?.isCalibrating == true) {
+                            "Calibrating..."
+                        } else {
+                            "Calibrate"
+                        }
+                    )
+                }
+            }
+
+            analysisSnapshot?.let { snapshot ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = buildAcceptanceText(snapshot),
+                    color = Color.White,
+                    style = label
+                )
+            }
+
+            analysisSnapshot?.calibrationStatus?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = buildCalibrationText(analysisSnapshot),
+                    color = Color.White,
+                    style = label
+                )
+            }
+
+            frameSaveMessage?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = it, color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
+            latestSavedFrame?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = buildSavedFrameText(it),
+                    color = Color.White,
+                    style = label
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.25f))
+            Spacer(modifier = Modifier.height(8.dp))
+            SectionLabel("Camera2 diagnostics")
+            Text(
+                text = when {
+                    error != null -> "Diagnostics failed: $error"
+                    report == null -> "Loading camera characteristics..."
+                    else -> report.toDisplayText()
+                },
+                color = if (error == null) Color.White else MaterialTheme.colorScheme.error,
+                style = mono,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            Button(
+                onClick = onExport,
+                enabled = report != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Export camera report")
+            }
+            exportMessage?.let {
+                Text(
+                    text = it,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        color = Color.White.copy(alpha = 0.85f),
+        style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.padding(bottom = 6.dp)
+    )
+}
+
+private fun buildLiveStatsText(
+    streamConfiguration: CameraStreamConfiguration?,
+    frameCount: Long,
+    analysisSnapshot: FrameAnalysisSnapshot?
+): String = buildString {
+    appendLine("camera_id: ${streamConfiguration?.cameraId ?: DEFAULT_CAMERA_ID}")
+    appendLine("analysis: ${streamConfiguration?.analysisSize?.display() ?: "configuring"}")
+    appendLine("raw frames: $frameCount")
+    analysisSnapshot?.let { snapshot ->
+        appendLine("processed: ${snapshot.processedFrameCount}")
+        appendLine("sharpness: ${snapshot.sharpness?.let { "%.1f".format(it) } ?: "n/a"}")
+        appendLine("markers: ${snapshot.markerCount}  corners: ${snapshot.charucoCornerCount}")
+        appendLine("detection: ${snapshot.detectionStatus}")
+        snapshot.rejectionReason?.let { appendLine("rejection: $it") }
+    }
+}
+
+private fun buildAcceptanceText(snapshot: FrameAnalysisSnapshot): String = buildString {
+    appendLine("accepted: ${snapshot.acceptedFrameCount}/${snapshot.maxAcceptedFrames}")
+    appendLine("auto capture: ${if (snapshot.autoCaptureActive) "on" else "off"}")
+    snapshot.lastAcceptanceReason?.let { appendLine("last decision: $it") }
+    snapshot.bboxAreaRatio?.let { append("coverage: ${"%.3f".format(it)}") }
+}
+
+private fun buildCalibrationText(snapshot: FrameAnalysisSnapshot): String = buildString {
+    appendLine("calibration: ${snapshot.calibrationStatus}")
+    snapshot.calibrationReprojectionError?.let {
+        appendLine("reprojection error: ${"%.3f".format(it)} px")
+    }
+    if (
+        snapshot.calibrationFx != null &&
+        snapshot.calibrationFy != null &&
+        snapshot.calibrationCx != null &&
+        snapshot.calibrationCy != null
+    ) {
+        appendLine(
+            "fx/fy/cx/cy: ${"%.1f".format(snapshot.calibrationFx)} / " +
+                "${"%.1f".format(snapshot.calibrationFy)} / " +
+                "${"%.1f".format(snapshot.calibrationCx)} / " +
+                "${"%.1f".format(snapshot.calibrationCy)}"
+        )
+    }
+    snapshot.calibrationOutputPath?.let { appendLine("output: $it") }
+}
+
+private fun buildSavedFrameText(savedFrame: SavedFrameFiles): String = buildString {
+    appendLine("Latest saved frame")
+    appendLine("  saved: ${savedFrame.savedAtUtc}")
+    appendLine("  dimensions: ${savedFrame.imageWidth}x${savedFrame.imageHeight}")
+    appendLine("  image: ${savedFrame.imageFile.absolutePath}")
+    append("  metadata: ${savedFrame.metadataFile.absolutePath}")
 }
 
 @Composable
