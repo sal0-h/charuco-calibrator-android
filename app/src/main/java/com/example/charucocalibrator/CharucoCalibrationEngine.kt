@@ -9,8 +9,6 @@ import org.opencv.core.Mat
 import org.opencv.core.MatOfDouble
 import org.opencv.core.Size
 import org.opencv.core.TermCriteria
-import org.opencv.objdetect.CharucoBoard
-import org.opencv.objdetect.Objdetect
 import java.io.File
 import java.time.Instant
 
@@ -27,12 +25,7 @@ data class CharucoCalibrationResult(
 )
 
 class CharucoCalibrationEngine {
-    private val board = CharucoBoard(
-        Size(BoardConfig.SQUARES_X.toDouble(), BoardConfig.SQUARES_Y.toDouble()),
-        BoardConfig.SQUARE_LENGTH_M,
-        BoardConfig.MARKER_LENGTH_M,
-        Objdetect.getPredefinedDictionary(Objdetect.DICT_5X5_100)
-    )
+    private val board by lazy { BoardConfig.createBoard() }
 
     fun calibrate(frames: List<AcceptedFrameRecord>): CharucoCalibrationResult {
         if (frames.size < 3) {

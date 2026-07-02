@@ -25,10 +25,10 @@ class FrameAnalysisPipeline(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processedCounter = AtomicLong(0)
     private val openCvReady = AtomicBoolean(false)
-    private val charucoDetector = CharucoFrameDetector()
+    private val charucoDetector by lazy { CharucoFrameDetector() }
     private val frameAcceptance = FrameAcceptanceController()
     private val acceptedFrameStore = AcceptedFrameStore(applicationContext)
-    private val calibrationEngine = CharucoCalibrationEngine()
+    private val calibrationEngine by lazy { CharucoCalibrationEngine() }
 
     @Volatile
     private var latestCalibrationStatus: String? = null

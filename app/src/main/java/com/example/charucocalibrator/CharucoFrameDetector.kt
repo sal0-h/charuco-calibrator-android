@@ -3,11 +3,8 @@ package com.example.charucocalibrator
 import org.opencv.core.Mat
 import org.opencv.core.MatOfInt
 import org.opencv.core.MatOfPoint2f
-import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
-import org.opencv.objdetect.CharucoBoard
 import org.opencv.objdetect.CharucoDetector
-import org.opencv.objdetect.Objdetect
 import kotlin.math.min
 
 data class DetectionBoundingBox(
@@ -52,13 +49,8 @@ data class DetectionResult(
 }
 
 class CharucoFrameDetector {
-    private val board = CharucoBoard(
-        Size(BoardConfig.SQUARES_X.toDouble(), BoardConfig.SQUARES_Y.toDouble()),
-        BoardConfig.SQUARE_LENGTH_M,
-        BoardConfig.MARKER_LENGTH_M,
-        Objdetect.getPredefinedDictionary(Objdetect.DICT_5X5_100)
-    )
-    private val detector = CharucoDetector(board)
+    private val board by lazy { BoardConfig.createBoard() }
+    private val detector by lazy { CharucoDetector(board) }
 
     fun detect(gray: Mat): DetectionResult {
         val bgr = YuvToGrayMat.toBgr(gray)
