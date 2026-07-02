@@ -12,7 +12,6 @@ import org.opencv.core.MatOfDouble
 import org.opencv.imgproc.Imgproc
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class FrameAnalysisPipeline(
@@ -24,7 +23,6 @@ class FrameAnalysisPipeline(
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val processedCounter = AtomicLong(0)
-    private val openCvReady = AtomicBoolean(false)
     private val charucoDetector by lazy { CharucoFrameDetector() }
     private val frameAcceptance = FrameAcceptanceController()
     private val acceptedFrameStore = AcceptedFrameStore(applicationContext)
@@ -158,7 +156,7 @@ class FrameAnalysisPipeline(
 
     private fun processGrayFrame(gray: Mat) {
         try {
-            if (!ensureOpenCv()) {
+            if (!OpenCvInitializer.isInitialized()) {
                 publishSnapshot(
                     processedCounter.get(),
                     null,
@@ -220,13 +218,6 @@ class FrameAnalysisPipeline(
             mean.release()
             stddev.release()
         }
-    }
-
-    private fun ensureOpenCv(): Boolean {
-        if (openCvReady.get()) return true
-        val loaded = OpenCvInitializer.ensureInitialized()
-        if (loaded) openCvReady.set(true)
-        return loaded
     }
 
     private fun updateProcessingFps() {

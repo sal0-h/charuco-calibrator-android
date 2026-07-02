@@ -11,13 +11,11 @@ object BoardConfig {
     const val MARKER_LENGTH_M = 0.018f
     const val DICT_NAME = "DICT_5X5_100"
 
-    fun createBoard(): CharucoBoard {
-        check(OpenCvInitializer.ensureInitialized()) { "OpenCV is not initialized" }
-        return CharucoBoard(
+    fun createBoard(): CharucoBoard =
+        CharucoBoard(
             Size(SQUARES_X.toDouble(), SQUARES_Y.toDouble()),
             SQUARE_LENGTH_M,
             MARKER_LENGTH_M,
             Objdetect.getPredefinedDictionary(Objdetect.DICT_5X5_100)
         )
-    }
 }

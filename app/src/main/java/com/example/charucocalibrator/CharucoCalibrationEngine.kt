@@ -35,7 +35,7 @@ class CharucoCalibrationEngine {
             )
         }
 
-        if (!OpenCvInitializer.ensureInitialized()) {
+        if (!OpenCvInitializer.isInitialized()) {
             return CharucoCalibrationResult(
                 success = false,
                 statusMessage = "OpenCV is not initialized"

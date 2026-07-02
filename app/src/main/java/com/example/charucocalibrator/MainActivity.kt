@@ -53,9 +53,6 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!OpenCvInitializer.ensureInitialized()) {
-            Log.e(TAG, "OpenCV failed to initialize at startup")
-        }
         enableEdgeToEdge()
         setContent {
             CharucoCalibratorTheme {
@@ -68,8 +65,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun CameraApp(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var openCvReady by remember { mutableStateOf(OpenCvInitializer.isInitialized()) }
-    var openCvError by remember { mutableStateOf<String?>(null) }
     var hasCameraPermission by remember {
         mutableStateOf(context.hasCameraPermission())
     }
@@ -79,33 +74,16 @@ private fun CameraApp(modifier: Modifier = Modifier) {
         hasCameraPermission = granted
     }
 
-    LaunchedEffect(Unit) {
-        if (!openCvReady) {
-            val loaded = withContext(Dispatchers.Default) {
-                OpenCvInitializer.ensureInitialized()
-            }
-            openCvReady = loaded
-            if (!loaded) {
-                openCvError = "OpenCV failed to load. Reinstall the app and try again."
-            }
-        }
-    }
-
     when {
-        openCvError != null -> {
+        !OpenCvInitializer.isInitialized() -> {
             Box(modifier = modifier, contentAlignment = Alignment.Center) {
                 Text(
-                    text = openCvError!!,
+                    text = "OpenCV failed to load. Reinstall the app and try again.",
                     color = Color.White,
                     modifier = Modifier
                         .background(Color.Black.copy(alpha = 0.85f))
                         .padding(16.dp)
                 )
-            }
-        }
-        !openCvReady -> {
-            Box(modifier = modifier, contentAlignment = Alignment.Center) {
-                Text("Loading OpenCV...", color = Color.White)
             }
         }
         hasCameraPermission -> CameraScreen(modifier = modifier)
@@ -137,7 +115,6 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
     var latestSavedFrame by remember { mutableStateOf<SavedFrameFiles?>(null) }
 
     val cameraController = remember(applicationContext) {
-        check(OpenCvInitializer.isInitialized()) { "OpenCV must be initialized before camera start" }
         Camera2Controller(
             context = applicationContext,
             cameraId = DEFAULT_CAMERA_ID,
