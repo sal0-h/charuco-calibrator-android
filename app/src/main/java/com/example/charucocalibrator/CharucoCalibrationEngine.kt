@@ -2,17 +2,23 @@ package com.example.charucocalibrator
 
 import android.content.Context
 import android.util.Log
+import android.util.SizeF
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.android.OpenCVLoader
 import org.opencv.calib3d.Calib3d
+import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.MatOfDouble
 import org.opencv.core.Size
 import org.opencv.core.TermCriteria
-import org.opencv.objdetect.CharucoDetector
 import java.io.File
 import java.time.Instant
+
+data class CalibrationCaptureHints(
+    val focalLengthMm: Float? = null,
+    val sensorPhysicalSize: SizeF? = null
+)
 
 data class CharucoCalibrationResult(
     val success: Boolean,
@@ -23,21 +29,33 @@ data class CharucoCalibrationResult(
     val cx: Double? = null,
     val cy: Double? = null,
     val cameraMatrix: Mat? = null,
-    val distortionCoefficients: Mat? = null
+    val distortionCoefficients: Mat? = null,
+    val usedFrames: Int = 0
+)
+
+private data class CalibrationSolveResult(
+    val success: Boolean,
+    val message: String,
+    val reprojectionErrorPx: Double? = null,
+    val cameraMatrix: Mat? = null,
+    val distortion: Mat? = null,
+    val perViewErrors: DoubleArray? = null
 )
 
 class CharucoCalibrationEngine {
     private val board by lazy { BoardConfig.createBoard() }
-    private val detector by lazy { CharucoDetector(board) }
+    private val detector by lazy { CharucoDetectorFactory.create(board) }
 
     fun calibrate(
         frames: List<AcceptedFrameRecord>,
+        hints: CalibrationCaptureHints = CalibrationCaptureHints(),
         onProgress: ((processed: Int, total: Int) -> Unit)? = null
     ): CharucoCalibrationResult {
-        if (frames.size < 3) {
+        if (frames.size < AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION) {
             return CharucoCalibrationResult(
                 success = false,
-                statusMessage = "Need at least 3 accepted frames, have ${frames.size}"
+                statusMessage =
+                    "Need at least ${AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION} accepted frames, have ${frames.size}"
             )
         }
 
@@ -53,42 +71,140 @@ class CharucoCalibrationEngine {
             frames.first().imageHeight.toDouble()
         )
 
-        val objectPointSets = ArrayList<Mat>()
-        val imagePointSets = ArrayList<Mat>()
-        var failedFrames = 0
-
-        frames.forEachIndexed { index, frame ->
-            onProgress?.invoke(index + 1, frames.size)
-            val correspondences = CharucoCorrespondenceBuilder.build(frame, board, detector)
-            if (correspondences == null) {
-                failedFrames += 1
-                Log.w(
-                    TAG,
-                    "No correspondences for ${frame.imageFile.name} " +
-                        "(charuco_corners=${frame.charucoCornerCount}, markers=${frame.markerCount})"
-                )
-            } else {
-                objectPointSets.add(correspondences.objectPoints)
-                imagePointSets.add(correspondences.imagePoints)
-            }
-        }
-
-        if (objectPointSets.size < 3) {
+        val correspondences = buildCorrespondences(frames, onProgress)
+        if (correspondences.size < AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION) {
+            releaseCorrespondences(correspondences)
             return CharucoCalibrationResult(
                 success = false,
                 statusMessage =
-                    "Only ${objectPointSets.size}/${frames.size} frames produced valid correspondences " +
-                    "($failedFrames failed matching)"
+                    "Only ${correspondences.size}/${frames.size} frames produced valid correspondences"
             )
         }
 
-        val cameraMatrix = Mat.eye(3, 3, org.opencv.core.CvType.CV_64F)
-        val distortion = Mat.zeros(1, 5, org.opencv.core.CvType.CV_64F)
+        val firstPass = solveCalibration(
+            correspondences = correspondences,
+            imageSize = imageSize,
+            hints = hints
+        )
+        if (!firstPass.success) {
+            releaseCorrespondences(correspondences)
+            return CharucoCalibrationResult(
+                success = false,
+                statusMessage = firstPass.message
+            )
+        }
+
+        val filtered = filterOutlierViews(
+            correspondences = correspondences,
+            perViewErrors = firstPass.perViewErrors
+        )
+        val droppedViews = correspondences.size - filtered.size
+        val finalPass = if (
+            droppedViews > 0 &&
+            filtered.size >= AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION
+        ) {
+            Log.i(TAG, "Dropping $droppedViews high-error views before final solve")
+            firstPass.cameraMatrix?.release()
+            firstPass.distortion?.release()
+            solveCalibration(
+                correspondences = filtered,
+                imageSize = imageSize,
+                hints = hints
+            )
+        } else {
+            firstPass
+        }
+
+        releaseCorrespondences(correspondences)
+
+        if (!finalPass.success) {
+            return CharucoCalibrationResult(
+                success = false,
+                statusMessage = finalPass.message
+            )
+        }
+
+        val cameraMatrix = finalPass.cameraMatrix ?: return CharucoCalibrationResult(
+            success = false,
+            statusMessage = "Calibration produced no camera matrix"
+        )
+        val distortion = finalPass.distortion ?: run {
+            cameraMatrix.release()
+            return CharucoCalibrationResult(success = false, statusMessage = "Calibration produced no distortion")
+        }
+
+        return CharucoCalibrationResult(
+            success = true,
+            statusMessage =
+                "Calibration succeeded with ${finalPass.perViewErrors?.size ?: filtered.size} views",
+            reprojectionErrorPx = finalPass.reprojectionErrorPx,
+            fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
+            fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
+            cx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
+            cy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
+            cameraMatrix = cameraMatrix,
+            distortionCoefficients = distortion,
+            usedFrames = finalPass.perViewErrors?.size ?: filtered.size
+        )
+    }
+
+    private data class FrameCorrespondence(
+        val frame: AcceptedFrameRecord,
+        val set: CorrespondenceSet
+    )
+
+    private fun buildCorrespondences(
+        frames: List<AcceptedFrameRecord>,
+        onProgress: ((processed: Int, total: Int) -> Unit)?
+    ): List<FrameCorrespondence> {
+        val correspondences = ArrayList<FrameCorrespondence>()
+        frames.forEachIndexed { index, frame ->
+            onProgress?.invoke(index + 1, frames.size)
+            val set = CharucoCorrespondenceBuilder.build(frame, board, detector) ?: return@forEachIndexed
+            correspondences += FrameCorrespondence(frame, set)
+        }
+        return correspondences
+    }
+
+    private fun filterOutlierViews(
+        correspondences: List<FrameCorrespondence>,
+        perViewErrors: DoubleArray?
+    ): List<FrameCorrespondence> {
+        if (perViewErrors == null || perViewErrors.size != correspondences.size) {
+            return correspondences
+        }
+        return correspondences.filterIndexed { index, _ ->
+            perViewErrors[index] <= AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX
+        }
+    }
+
+    private fun solveCalibration(
+        correspondences: List<FrameCorrespondence>,
+        imageSize: Size,
+        hints: CalibrationCaptureHints
+    ): CalibrationSolveResult {
+        val objectPointSets = correspondences.map { it.set.objectPoints }
+        val imagePointSets = correspondences.map { it.set.imagePoints }
+
+        val cameraMatrix = CameraMatrixSeeder.seed(
+            imageWidth = imageSize.width.toInt(),
+            imageHeight = imageSize.height.toInt(),
+            focalLengthMm = hints.focalLengthMm,
+            sensorPhysicalSize = hints.sensorPhysicalSize
+        )
+        val distortion = Mat.zeros(1, 5, CvType.CV_64F)
         val rvecs = ArrayList<Mat>()
         val tvecs = ArrayList<Mat>()
+        val stdIntrinsics = Mat()
+        val stdExtrinsics = Mat()
+        val perViewErrors = Mat()
+
+        val flags = Calib3d.CALIB_USE_INTRINSIC_GUESS or
+            Calib3d.CALIB_FIX_ASPECT_RATIO or
+            Calib3d.CALIB_FIX_K3
 
         return try {
-            val reprojectionError = Calib3d.calibrateCamera(
+            val reprojectionError = Calib3d.calibrateCameraExtended(
                 objectPointSets,
                 imagePointSets,
                 imageSize,
@@ -96,35 +212,50 @@ class CharucoCalibrationEngine {
                 distortion,
                 rvecs,
                 tvecs,
-                Calib3d.CALIB_FIX_K3,
-                TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 100, 1e-6)
+                stdIntrinsics,
+                stdExtrinsics,
+                perViewErrors,
+                flags,
+                TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 100, 1e-7)
             )
 
             rvecs.forEach(Mat::release)
             tvecs.forEach(Mat::release)
-            objectPointSets.forEach(Mat::release)
-            imagePointSets.forEach(Mat::release)
+            stdIntrinsics.release()
+            stdExtrinsics.release()
 
-            CharucoCalibrationResult(
+            val perViewArray = DoubleArray(perViewErrors.rows()) { index ->
+                OpenCvMatAccess.readMatrixValue(perViewErrors, index, 0)
+            }
+            perViewErrors.release()
+
+            CalibrationSolveResult(
                 success = true,
-                statusMessage = "Calibration succeeded with ${objectPointSets.size} views",
+                message = "ok",
                 reprojectionErrorPx = reprojectionError,
-                fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
-                fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
-                cx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
-                cy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
                 cameraMatrix = cameraMatrix,
-                distortionCoefficients = distortion
+                distortion = distortion,
+                perViewErrors = perViewArray
             )
         } catch (exception: Exception) {
-            objectPointSets.forEach(Mat::release)
-            imagePointSets.forEach(Mat::release)
+            rvecs.forEach(Mat::release)
+            tvecs.forEach(Mat::release)
+            stdIntrinsics.release()
+            stdExtrinsics.release()
+            perViewErrors.release()
             cameraMatrix.release()
             distortion.release()
-            CharucoCalibrationResult(
+            CalibrationSolveResult(
                 success = false,
-                statusMessage = "Calibration failed: ${exception.message}"
+                message = "Calibration failed: ${exception.message}"
             )
+        }
+    }
+
+    private fun releaseCorrespondences(correspondences: List<FrameCorrespondence>) {
+        correspondences.forEach {
+            it.set.objectPoints.release()
+            it.set.imagePoints.release()
         }
     }
 
@@ -143,7 +274,7 @@ class CharucoCalibrationEngine {
 
         val distortionValues = MatOfDouble()
         return try {
-            distortion.convertTo(distortionValues, org.opencv.core.CvType.CV_64F)
+            distortion.convertTo(distortionValues, CvType.CV_64F)
             val coeffs = DoubleArray(5) { index ->
                 if (index < distortionValues.total().toInt()) {
                     OpenCvMatAccess.readMatrixValue(distortionValues, index, 0)
@@ -186,6 +317,7 @@ class CharucoCalibrationEngine {
                     put("distortion_coefficients", coeffs.toJsonArray())
                     put("reprojection_error_px", result.reprojectionErrorPx)
                     put("accepted_frames", acceptedFrames)
+                    put("used_frames", result.usedFrames)
                     put("generated_at_utc", Instant.now().toString())
                     put("opencv_version", OpenCVLoader.OPENCV_VERSION)
                 }.toString(JSON_INDENT_SPACES)

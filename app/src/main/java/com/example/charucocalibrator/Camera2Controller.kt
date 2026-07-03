@@ -107,6 +107,12 @@ class Camera2Controller(
     private var sessionGeneration = 0
     private var openRequested = false
 
+    @Volatile
+    private var calibrationCaptureLocked = false
+
+    @Volatile
+    private var calibrationCaptureHints = CalibrationCaptureHints()
+
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(
             surface: SurfaceTexture,
@@ -181,10 +187,25 @@ class Camera2Controller(
 
     fun startAutoCapture() {
         frameAnalysisPipeline.startAutoCapture()
+        cameraHandler.post {
+            calibrationCaptureLocked = false
+            updateRepeatingCaptureRequest()
+            cameraHandler.postDelayed({
+                if (!released && shouldRun) {
+                    calibrationCaptureLocked = true
+                    updateRepeatingCaptureRequest()
+                    notifyStatus("Calibration capture: exposure and white balance locked")
+                }
+            }, CALIBRATION_LOCK_DELAY_MS)
+        }
     }
 
     fun stopAutoCapture() {
         frameAnalysisPipeline.stopAutoCapture()
+        cameraHandler.post {
+            calibrationCaptureLocked = false
+            updateRepeatingCaptureRequest()
+        }
     }
 
     fun clearAcceptedFrames() {
@@ -206,6 +227,13 @@ class Camera2Controller(
                 }
 
                 val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                calibrationCaptureHints = CalibrationCaptureHints(
+                    focalLengthMm = characteristics[
+                        CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                    ]?.firstOrNull(),
+                    sensorPhysicalSize = characteristics[CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE]
+                )
+                frameAnalysisPipeline.setCalibrationCaptureHints(calibrationCaptureHints)
                 sensorOrientationDegrees =
                     characteristics[CameraCharacteristics.SENSOR_ORIENTATION]
                 val streamMap = characteristics[
@@ -317,19 +345,11 @@ class Camera2Controller(
 
                         captureSession = session
                         try {
-                            val request = camera.createCaptureRequest(
-                                CameraDevice.TEMPLATE_PREVIEW
-                            ).apply {
-                                addTarget(preview)
-                                addTarget(reader.surface)
-                                set(
-                                    CaptureRequest.CONTROL_AF_MODE,
-                                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                                )
-                                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                            }.build()
-
-                            session.setRepeatingRequest(request, captureCallback, cameraHandler)
+                            session.setRepeatingRequest(
+                                buildCaptureRequest(camera, preview, reader.surface),
+                                captureCallback,
+                                cameraHandler
+                            )
                             streamActive.set(true)
                             val previewSize = checkNotNull(selectedPreviewSize)
                             notifyStreamConfigured(analysisSize, previewSize)
@@ -563,6 +583,7 @@ class Camera2Controller(
         sessionGeneration += 1
         streamActive.set(false)
         openRequested = false
+        calibrationCaptureLocked = false
         captureSession?.close()
         captureSession = null
         imageReader?.close()
@@ -602,6 +623,51 @@ class Camera2Controller(
 
     private fun postToMain(action: () -> Unit) {
         if (!released) mainHandler.post { if (!released) action() }
+    }
+
+    private fun updateRepeatingCaptureRequest() {
+        val camera = cameraDevice ?: return
+        val preview = previewSurface ?: return
+        val reader = imageReader ?: return
+        val session = captureSession ?: return
+        try {
+            session.setRepeatingRequest(
+                buildCaptureRequest(camera, preview, reader.surface),
+                captureCallback,
+                cameraHandler
+            )
+        } catch (exception: Exception) {
+            Log.w(TAG, "Failed to update capture request", exception)
+        }
+    }
+
+    private fun buildCaptureRequest(
+        camera: CameraDevice,
+        preview: Surface,
+        readerSurface: Surface
+    ): CaptureRequest {
+        val template = if (calibrationCaptureLocked) {
+            CameraDevice.TEMPLATE_STILL_CAPTURE
+        } else {
+            CameraDevice.TEMPLATE_PREVIEW
+        }
+        return camera.createCaptureRequest(template).apply {
+            addTarget(preview)
+            addTarget(readerSurface)
+            set(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            if (calibrationCaptureLocked) {
+                set(CaptureRequest.CONTROL_AE_LOCK, true)
+                set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                set(
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
+                )
+            }
+        }.build()
     }
 }
 
@@ -783,6 +849,7 @@ const val ORIENTATION_NOTE = "Camera2 sensor-native landscape grid; not display-
 private val PREFERRED_ANALYSIS_SIZE = Size(4000, 3000)
 private val FALLBACK_ANALYSIS_SIZE = Size(1920, 1440)
 private val PREFERRED_PREVIEW_SIZE = Size(1920, 1440)
+private const val CALIBRATION_LOCK_DELAY_MS = 2_500L
 private const val MAX_IMAGES = 3
 private const val MAX_METADATA_ENTRIES = 64
 private const val MIN_INITIAL_FRAMES = 4

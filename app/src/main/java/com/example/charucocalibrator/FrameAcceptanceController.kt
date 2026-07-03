@@ -10,6 +10,7 @@ data class AcceptanceDecision(
 
 class FrameAcceptanceController {
     private val recentAccepted = ArrayDeque<AcceptedFrameProxy>()
+    private val poseCoverage = PoseCoverageTracker()
     private var lastAcceptedAtMs = 0L
 
     @Volatile
@@ -66,6 +67,11 @@ class FrameAcceptanceController {
             cornerCount = detection.charucoCornerCount
         )
 
+        if (!poseCoverage.shouldAccept(proxy.centerXRatio, proxy.centerYRatio)) {
+            lastDecisionMessage = "rejected: pose_grid_already_covered"
+            return AcceptanceDecision(false, lastDecisionMessage!!)
+        }
+
         recentAccepted.forEach { previous ->
             val centerDistance = hypot(
                 proxy.centerXRatio - previous.centerXRatio,
@@ -85,6 +91,7 @@ class FrameAcceptanceController {
 
         lastAcceptedAtMs = now
         recentAccepted.addLast(proxy)
+        poseCoverage.recordAccept(proxy.centerXRatio, proxy.centerYRatio)
         while (recentAccepted.size > 8) {
             recentAccepted.removeFirst()
         }
@@ -95,6 +102,7 @@ class FrameAcceptanceController {
 
     fun clearHistory() {
         recentAccepted.clear()
+        poseCoverage.clear()
         lastAcceptedAtMs = 0L
         lastDecisionMessage = null
     }

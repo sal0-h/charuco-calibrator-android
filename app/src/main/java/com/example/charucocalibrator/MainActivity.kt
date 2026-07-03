@@ -316,7 +316,7 @@ private fun DiagnosticsPanel(
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = onRunCalibration,
-                    enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= 3 &&
+                    enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) >= AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION &&
                         analysisSnapshot?.isCalibrating != true,
                     modifier = Modifier.weight(1f)
                 ) {

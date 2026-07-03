@@ -54,7 +54,7 @@ data class DetectionResult(
 
 class CharucoFrameDetector {
     private val board by lazy { BoardConfig.createBoard() }
-    private val detector by lazy { CharucoDetector(board) }
+    private val detector by lazy { CharucoDetectorFactory.create(board) }
 
     fun detect(gray: Mat): DetectionResult {
         val bgr = YuvToGrayMat.toBgr(gray)
@@ -64,6 +64,9 @@ class CharucoFrameDetector {
         val markerIds = MatOfInt()
         return try {
             detector.detectBoard(bgr, charucoCorners, charucoIds, markerCorners, markerIds)
+            if (!charucoCorners.empty()) {
+                CharucoCornerRefiner.refine(gray, charucoCorners)
+            }
             val markerCount = markerIds.rows()
             val cornerCount = charucoIds.rows()
             if (cornerCount == 0) {
