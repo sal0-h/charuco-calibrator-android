@@ -170,20 +170,12 @@ class CharucoCalibrationEngine {
         return CharucoCalibrationResult(
             success = true,
             statusMessage = buildString {
-                append("Calibration succeeded with $usedViews views")
-                finalPass.reprojectionErrorPx?.let {
-                    append(", RMS=${"%.2f".format(it)} px")
-                }
-                medianViewError?.let {
-                    append(", median=${"%.2f".format(it)} px")
-                }
-                p90ViewError?.let {
-                    append(", p90=${"%.2f".format(it)} px")
-                }
-                append(", solver=${finalPass.variantName}")
+                append("Calibration succeeded")
+                append(" ($usedViews views used")
                 if (droppedViews > 0) {
-                    append(", dropped $droppedViews")
+                    append(", $droppedViews dropped")
                 }
+                append(")")
             },
             reprojectionErrorPx = finalPass.reprojectionErrorPx,
             perViewErrorsPx = perViewErrors,

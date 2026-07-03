@@ -449,22 +449,22 @@ private fun buildAcceptanceText(snapshot: FrameAnalysisSnapshot): String = build
 }
 
 private fun buildCalibrationText(snapshot: FrameAnalysisSnapshot): String = buildString {
-    appendLine("calibration: ${snapshot.calibrationStatus}")
+    snapshot.calibrationStatus?.let { appendLine(it) }
     snapshot.calibrationReprojectionError?.let {
-        appendLine("RMS reprojection: ${"%.3f".format(it)} px")
+        appendLine("RMS: ${"%.3f".format(it)} px")
     }
     snapshot.calibrationMedianPerViewError?.let {
-        appendLine("median per-view: ${"%.3f".format(it)} px")
+        appendLine("median: ${"%.3f".format(it)} px")
     }
     snapshot.calibrationP90PerViewError?.let {
-        appendLine("p90 per-view: ${"%.3f".format(it)} px")
+        appendLine("p90: ${"%.3f".format(it)} px")
     }
     snapshot.calibrationSolverVariant?.let {
         appendLine("solver: $it")
     }
     snapshot.calibrationUsedFrames?.let { used ->
         val dropped = snapshot.calibrationDroppedFrames ?: 0
-        appendLine("views: $used used, $dropped dropped")
+        appendLine("frames: $used used, $dropped dropped")
     }
     if (
         snapshot.calibrationFx != null &&
