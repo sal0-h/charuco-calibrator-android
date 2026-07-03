@@ -14,32 +14,56 @@ import org.opencv.core.Size
 import org.opencv.core.TermCriteria
 import java.io.File
 import java.time.Instant
+import kotlin.math.ceil
 
 data class CalibrationCaptureHints(
     val focalLengthMm: Float? = null,
     val sensorPhysicalSize: SizeF? = null
 )
 
+data class CaptureSummary(
+    val medianIso: Int?,
+    val medianExposureTimeNs: Long?,
+    val focusDistanceRange: Pair<Float, Float>?
+)
+
 data class CharucoCalibrationResult(
     val success: Boolean,
     val statusMessage: String,
     val reprojectionErrorPx: Double? = null,
+    val perViewErrorsPx: List<Double>? = null,
+    val medianPerViewErrorPx: Double? = null,
+    val p90PerViewErrorPx: Double? = null,
+    val solverVariant: String? = null,
+    val solverFlags: String? = null,
     val fx: Double? = null,
     val fy: Double? = null,
     val cx: Double? = null,
     val cy: Double? = null,
     val cameraMatrix: Mat? = null,
     val distortionCoefficients: Mat? = null,
-    val usedFrames: Int = 0
+    val acceptedFrames: Int = 0,
+    val usedFrames: Int = 0,
+    val droppedFrames: Int = 0,
+    val outlierThresholdPx: Double? = null,
+    val captureSummary: CaptureSummary? = null
 )
 
 private data class CalibrationSolveResult(
     val success: Boolean,
     val message: String,
+    val variantName: String,
+    val flagsLabel: String,
     val reprojectionErrorPx: Double? = null,
     val cameraMatrix: Mat? = null,
     val distortion: Mat? = null,
     val perViewErrors: DoubleArray? = null
+)
+
+private data class SolverVariant(
+    val name: String,
+    val flags: Int,
+    val flagsLabel: String
 )
 
 class CharucoCalibrationEngine {
@@ -70,6 +94,7 @@ class CharucoCalibrationEngine {
             frames.first().imageWidth.toDouble(),
             frames.first().imageHeight.toDouble()
         )
+        val captureSummary = buildCaptureSummary(frames)
 
         val correspondences = buildCorrespondences(frames, onProgress)
         if (correspondences.size < AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION) {
@@ -81,7 +106,7 @@ class CharucoCalibrationEngine {
             )
         }
 
-        val firstPass = solveCalibration(
+        val firstPass = solveBestVariant(
             correspondences = correspondences,
             imageSize = imageSize,
             hints = hints
@@ -94,9 +119,11 @@ class CharucoCalibrationEngine {
             )
         }
 
+        val outlierThreshold = computeOutlierThreshold(firstPass.perViewErrors)
         val filtered = filterOutlierViews(
             correspondences = correspondences,
-            perViewErrors = firstPass.perViewErrors
+            perViewErrors = firstPass.perViewErrors,
+            threshold = outlierThreshold
         )
         val droppedViews = correspondences.size - filtered.size
         val finalPass = if (
@@ -109,7 +136,7 @@ class CharucoCalibrationEngine {
             )
             firstPass.cameraMatrix?.release()
             firstPass.distortion?.release()
-            solveCalibration(
+            solveBestVariant(
                 correspondences = filtered,
                 imageSize = imageSize,
                 hints = hints
@@ -136,8 +163,10 @@ class CharucoCalibrationEngine {
             return CharucoCalibrationResult(success = false, statusMessage = "Calibration produced no distortion")
         }
 
-        val usedViews = finalPass.perViewErrors?.size ?: filtered.size
-        val medianViewError = finalPass.perViewErrors?.median()
+        val perViewErrors = finalPass.perViewErrors?.toList()
+        val usedViews = perViewErrors?.size ?: filtered.size
+        val medianViewError = perViewErrors?.median()
+        val p90ViewError = perViewErrors?.percentile90()
         return CharucoCalibrationResult(
             success = true,
             statusMessage = buildString {
@@ -146,20 +175,33 @@ class CharucoCalibrationEngine {
                     append(", RMS=${"%.2f".format(it)} px")
                 }
                 medianViewError?.let {
-                    append(", median view=${"%.2f".format(it)} px")
+                    append(", median=${"%.2f".format(it)} px")
                 }
+                p90ViewError?.let {
+                    append(", p90=${"%.2f".format(it)} px")
+                }
+                append(", solver=${finalPass.variantName}")
                 if (droppedViews > 0) {
                     append(", dropped $droppedViews")
                 }
             },
             reprojectionErrorPx = finalPass.reprojectionErrorPx,
+            perViewErrorsPx = perViewErrors,
+            medianPerViewErrorPx = medianViewError,
+            p90PerViewErrorPx = p90ViewError,
+            solverVariant = finalPass.variantName,
+            solverFlags = finalPass.flagsLabel,
             fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
             fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
             cx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
             cy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
             cameraMatrix = cameraMatrix,
             distortionCoefficients = distortion,
-            usedFrames = usedViews
+            acceptedFrames = frames.size,
+            usedFrames = usedViews,
+            droppedFrames = droppedViews,
+            outlierThresholdPx = outlierThreshold,
+            captureSummary = captureSummary
         )
     }
 
@@ -181,21 +223,85 @@ class CharucoCalibrationEngine {
         return correspondences
     }
 
+    private fun solverVariants(viewCount: Int): List<SolverVariant> {
+        val variants = mutableListOf(
+            SolverVariant(
+                name = "fix_k3",
+                flags = Calib3d.CALIB_FIX_K3,
+                flagsLabel = "CALIB_FIX_K3"
+            ),
+            SolverVariant(
+                name = "flags_zero",
+                flags = 0,
+                flagsLabel = "0"
+            )
+        )
+        if (viewCount >= AcceptanceConfig.MIN_VIEWS_FOR_RATIONAL_MODEL) {
+            variants += SolverVariant(
+                name = "rational_model",
+                flags = Calib3d.CALIB_RATIONAL_MODEL,
+                flagsLabel = "CALIB_RATIONAL_MODEL"
+            )
+        }
+        return variants
+    }
+
+    private fun solveBestVariant(
+        correspondences: List<FrameCorrespondence>,
+        imageSize: Size,
+        hints: CalibrationCaptureHints
+    ): CalibrationSolveResult {
+        val candidates = solverVariants(correspondences.size).mapNotNull { variant ->
+            val solved = solveCalibration(
+                correspondences = correspondences,
+                imageSize = imageSize,
+                hints = hints,
+                variant = variant
+            )
+            if (solved.success) solved else {
+                solved.cameraMatrix?.release()
+                solved.distortion?.release()
+                null
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return CalibrationSolveResult(
+                success = false,
+                message = "All solver variants failed",
+                variantName = "none",
+                flagsLabel = "none"
+            )
+        }
+
+        return candidates.minWith(
+            compareBy<CalibrationSolveResult> { it.reprojectionErrorPx ?: Double.MAX_VALUE }
+                .thenBy { it.perViewErrors?.median() ?: Double.MAX_VALUE }
+                .thenBy { it.perViewErrors?.percentile90() ?: Double.MAX_VALUE }
+        )
+    }
+
+    private fun computeOutlierThreshold(perViewErrors: DoubleArray?): Double {
+        if (perViewErrors == null || perViewErrors.isEmpty()) {
+            return AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX
+        }
+        val median = perViewErrors.sorted().let { sorted ->
+            sorted[sorted.size / 2]
+        }
+        return maxOf(
+            AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX,
+            median * 2.0
+        )
+    }
+
     private fun filterOutlierViews(
         correspondences: List<FrameCorrespondence>,
-        perViewErrors: DoubleArray?
+        perViewErrors: DoubleArray?,
+        threshold: Double
     ): List<FrameCorrespondence> {
         if (perViewErrors == null || perViewErrors.size != correspondences.size) {
             return correspondences
         }
-
-        val median = perViewErrors.sorted().let { sorted ->
-            sorted[sorted.size / 2]
-        }
-        val threshold = maxOf(
-            AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX,
-            median * 2.0
-        )
         return correspondences.filterIndexed { index, _ ->
             perViewErrors[index] <= threshold
         }
@@ -204,7 +310,8 @@ class CharucoCalibrationEngine {
     private fun solveCalibration(
         correspondences: List<FrameCorrespondence>,
         imageSize: Size,
-        hints: CalibrationCaptureHints
+        hints: CalibrationCaptureHints,
+        variant: SolverVariant
     ): CalibrationSolveResult {
         val objectPointSets = correspondences.map { it.set.objectPoints }
         val imagePointSets = correspondences.map { it.set.imagePoints }
@@ -216,8 +323,6 @@ class CharucoCalibrationEngine {
         val stdIntrinsics = Mat()
         val stdExtrinsics = Mat()
         val perViewErrors = Mat()
-
-        val flags = Calib3d.CALIB_FIX_K3
 
         return try {
             val reprojectionError = Calib3d.calibrateCameraExtended(
@@ -231,7 +336,7 @@ class CharucoCalibrationEngine {
                 stdIntrinsics,
                 stdExtrinsics,
                 perViewErrors,
-                flags,
+                variant.flags,
                 TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 100, 1e-7)
             )
 
@@ -248,6 +353,8 @@ class CharucoCalibrationEngine {
             CalibrationSolveResult(
                 success = true,
                 message = "ok",
+                variantName = variant.name,
+                flagsLabel = variant.flagsLabel,
                 reprojectionErrorPx = reprojectionError,
                 cameraMatrix = cameraMatrix,
                 distortion = distortion,
@@ -263,7 +370,9 @@ class CharucoCalibrationEngine {
             distortion.release()
             CalibrationSolveResult(
                 success = false,
-                message = "Calibration failed: ${exception.message}"
+                message = "Calibration failed (${variant.name}): ${exception.message}",
+                variantName = variant.name,
+                flagsLabel = variant.flagsLabel
             )
         }
     }
@@ -273,6 +382,24 @@ class CharucoCalibrationEngine {
             it.set.objectPoints.release()
             it.set.imagePoints.release()
         }
+    }
+
+    private fun buildCaptureSummary(frames: List<AcceptedFrameRecord>): CaptureSummary {
+        val metadata = frames.mapNotNull { frame ->
+            runCatching {
+                FrameMetadata.fromJson(JSONObject(frame.metadataFile.readText()))
+            }.getOrNull()
+        }
+        val isoValues = metadata.mapNotNull { it.isoSensitivity }.sorted()
+        val exposureValues = metadata.mapNotNull { it.exposureTimeNs }.sorted()
+        val focusValues = metadata.mapNotNull { it.lensFocusDistance }.filter { it > 0f }
+        return CaptureSummary(
+            medianIso = isoValues.medianInt(),
+            medianExposureTimeNs = exposureValues.medianLong(),
+            focusDistanceRange = focusValues.takeIf { it.isNotEmpty() }?.let {
+                it.min() to it.max()
+            }
+        )
     }
 
     fun exportResult(
@@ -332,8 +459,32 @@ class CharucoCalibrationEngine {
                     put("distortion_model", "opencv_pinhole_5")
                     put("distortion_coefficients", coeffs.toJsonArray())
                     put("reprojection_error_px", result.reprojectionErrorPx)
+                    result.perViewErrorsPx?.let { errors ->
+                        put("per_view_errors_px", errors.toJsonArray())
+                    }
+                    put("median_per_view_error_px", result.medianPerViewErrorPx)
+                    put("p90_per_view_error_px", result.p90PerViewErrorPx)
+                    put("solver_variant", result.solverVariant)
+                    put("solver_flags", result.solverFlags)
                     put("accepted_frames", acceptedFrames)
                     put("used_frames", result.usedFrames)
+                    put("dropped_frames", result.droppedFrames)
+                    put("outlier_threshold_px", result.outlierThresholdPx)
+                    result.captureSummary?.let { summary ->
+                        put(
+                            "capture_summary",
+                            JSONObject().apply {
+                                put("median_iso", summary.medianIso ?: JSONObject.NULL)
+                                put(
+                                    "median_exposure_time_ns",
+                                    summary.medianExposureTimeNs ?: JSONObject.NULL
+                                )
+                                summary.focusDistanceRange?.let { (min, max) ->
+                                    put("focus_distance_range", JSONArray().put(min).put(max))
+                                }
+                            }
+                        )
+                    }
                     put("generated_at_utc", Instant.now().toString())
                     put("opencv_version", OpenCVLoader.OPENCV_VERSION)
                 }.toString(JSON_INDENT_SPACES)
@@ -354,10 +505,34 @@ class CharucoCalibrationEngine {
     private fun DoubleArray.toJsonArray(): JSONArray =
         JSONArray().also { array -> forEach(array::put) }
 
-    private fun DoubleArray.median(): Double {
+    private fun List<Double>.toJsonArray(): JSONArray =
+        JSONArray().also { array -> forEach(array::put) }
+
+    private fun List<Double>.median(): Double {
         if (isEmpty()) return 0.0
         val sorted = sorted()
         return sorted[sorted.size / 2]
+    }
+
+    private fun DoubleArray.median(): Double = toList().median()
+
+    private fun List<Double>.percentile90(): Double {
+        if (isEmpty()) return 0.0
+        val sorted = sorted()
+        val index = ceil(0.9 * sorted.size).toInt().coerceIn(1, sorted.size) - 1
+        return sorted[index]
+    }
+
+    private fun DoubleArray.percentile90(): Double = toList().percentile90()
+
+    private fun List<Int>.medianInt(): Int? {
+        if (isEmpty()) return null
+        return sorted()[size / 2]
+    }
+
+    private fun List<Long>.medianLong(): Long? {
+        if (isEmpty()) return null
+        return sorted()[size / 2]
     }
 
     companion object {

@@ -17,7 +17,8 @@ import java.util.concurrent.atomic.AtomicLong
 class FrameAnalysisPipeline(
     context: Context,
     private val cameraId: String,
-    private val onSnapshot: (FrameAnalysisSnapshot) -> Unit
+    private val onSnapshot: (FrameAnalysisSnapshot) -> Unit,
+    private val metadataLookup: (Long?) -> FrameMetadata? = { null }
 ) {
     private val applicationContext = context.applicationContext
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -76,10 +77,24 @@ class FrameAnalysisPipeline(
     @Volatile
     private var calibrationHints = CalibrationCaptureHints()
 
-    fun submitFrame(image: Image, rawCount: Long, sensorTimestampNs: Long?) {
+    @Volatile
+    private var latestCaptureMetadata: FrameMetadata? = null
+
+    @Volatile
+    private var latestCaptureStability: CaptureStabilityState? = null
+
+    fun submitFrame(
+        image: Image,
+        rawCount: Long,
+        sensorTimestampNs: Long?,
+        captureMetadata: FrameMetadata? = null,
+        captureStability: CaptureStabilityState? = null
+    ) {
         if (released) return
         rawFrameCount = rawCount
         latestSensorTimestampNs = sensorTimestampNs
+        latestCaptureMetadata = captureMetadata ?: metadataLookup(sensorTimestampNs)
+        latestCaptureStability = captureStability
 
         val now = System.nanoTime()
         if (now - lastProcessTimeNs < MIN_PROCESS_INTERVAL_NS) {
@@ -116,11 +131,13 @@ class FrameAnalysisPipeline(
     fun startAutoCapture() {
         autoCaptureEnabled = true
         frameAcceptance.markAutoCaptureStarted()
+        latestCaptureStability = CaptureStabilityState(CaptureStabilityStatus.WARMING_UP)
         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
     }
 
     fun stopAutoCapture() {
         autoCaptureEnabled = false
+        latestCaptureStability = null
         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
     }
 
@@ -228,12 +245,18 @@ class FrameAnalysisPipeline(
             updateProcessingFps()
 
             if (autoCaptureEnabled) {
+                val metadata = latestCaptureMetadata
+                val stability = latestCaptureStability
+                    ?: CaptureStabilityState(CaptureStabilityStatus.METADATA_MISSING)
                 val decision = frameAcceptance.evaluate(
                     detection = detection,
                     sharpness = sharpness,
                     frameWidth = gray.cols(),
                     frameHeight = gray.rows(),
-                    acceptedCount = acceptedFrameStore.count
+                    acceptedCount = acceptedFrameStore.count,
+                    captureMetadata = metadata,
+                    captureStability = stability,
+                    autoCaptureActive = true
                 )
                 if (decision.accepted) {
                     acceptedFrameStore.saveFrame(
@@ -242,6 +265,7 @@ class FrameAnalysisPipeline(
                         sharpness = sharpness,
                         detection = detection,
                         sensorTimestampNs = latestSensorTimestampNs,
+                        captureMetadata = metadata,
                         reason = decision.message
                     )
                 } else {
@@ -307,8 +331,17 @@ class FrameAnalysisPipeline(
             maxAcceptedFrames = AcceptanceConfig.MAX_ACCEPTED_FRAMES,
             lastAcceptanceReason = frameAcceptance.lastDecisionMessage,
             autoCaptureActive = autoCaptureEnabled,
+            captureMetadata = latestCaptureMetadata,
+            captureStabilityStatus = latestCaptureStability?.status,
+            captureStabilityMessage = latestCaptureStability?.message,
+            referenceFocusDistance = latestCaptureStability?.referenceFocusDistance,
             calibrationStatus = latestCalibrationStatus,
             calibrationReprojectionError = latestCalibrationResult?.reprojectionErrorPx,
+            calibrationMedianPerViewError = latestCalibrationResult?.medianPerViewErrorPx,
+            calibrationP90PerViewError = latestCalibrationResult?.p90PerViewErrorPx,
+            calibrationSolverVariant = latestCalibrationResult?.solverVariant,
+            calibrationUsedFrames = latestCalibrationResult?.usedFrames,
+            calibrationDroppedFrames = latestCalibrationResult?.droppedFrames,
             calibrationFx = latestCalibrationResult?.fx,
             calibrationFy = latestCalibrationResult?.fy,
             calibrationCx = latestCalibrationResult?.cx,

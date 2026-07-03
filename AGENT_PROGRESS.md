@@ -59,6 +59,41 @@ Inspection method: downloaded the published AAR and inspected
 ## Build / lint status
 
 - Milestones C–I: `assembleDebug` and `lintDebug` passed.
+- Phase 1 + 2 (capture metadata, stability gates, solver A/B, rich report):
+  `assembleDebug` and `lintDebug` passed.
+
+## Phase 1 + 2 changes (sub-1 px calibration prep)
+
+### Capture metadata on accepted frames
+
+- Extended `FrameMetadata` with exposure, ISO, focal length, focus distance, and AF/AE/AWB states.
+- `CaptureMetadataStore` associates metadata with image timestamps (exact or nearest prior).
+- Accepted frame JSON and live UI surface capture metadata.
+
+### Capture stability
+
+- OIS and video stabilization disabled during auto capture (after warmup).
+- AWB lock after 2.5 s warmup; AE lock remains off (known regression at ~7.5 px).
+- `CaptureStabilityController` with default `af_trigger_then_reject_drift` focus policy.
+- UI shows `warming_up` / `stable` / `focus_unstable` / `metadata_missing`.
+
+### Quality gates
+
+- `CaptureQualityGates`: `MAX_ISO=1000`, `MAX_EXPOSURE_TIME_NS=15ms`, focus drift threshold.
+- Reject reasons: `too_dark_high_iso`, `exposure_too_long`, `focus_unstable`, `af_not_stable`,
+  `capture_metadata_missing`.
+
+### Solver A/B and rich report
+
+- Compares `CALIB_FIX_K3`, `flags=0`, and optional `CALIB_RATIONAL_MODEL` (≥25 views).
+- Winner by lowest RMS → median per-view → p90 per-view.
+- `charuco_calibration_result.json` includes per-view errors, median, p90, solver variant,
+  used/dropped counts, outlier threshold, and capture summary.
+
+### Limitations
+
+- Printed matte board required for meaningful sub-1 px validation; laptop screen ~3–4.5 px ceiling.
+- Capture guidance bins, debug overlays, detector refinement A/B, and Python audit extension deferred.
 
 ## Commits and pushes
 
@@ -69,6 +104,7 @@ Inspection method: downloaded the published AAR and inspected
 - `Add ChArUco calibration JSON export` — pushed to `origin/main`.
 - `Add offline ChArUco calibration audit script` — pushed to `origin/main`.
 - `Clean up calibration app lifecycle and docs` — pushed to `origin/main`.
+- `Add capture stability gates and solver comparison` — pushed to `origin/main`.
 
 ## Known limitations
 

@@ -48,6 +48,7 @@ class AcceptedFrameStore(
         sharpness: Double,
         detection: DetectionResult,
         sensorTimestampNs: Long?,
+        captureMetadata: FrameMetadata? = null,
         reason: String
     ): AcceptedFrameRecord? {
         if (count >= AcceptanceConfig.MAX_ACCEPTED_FRAMES) {
@@ -85,6 +86,7 @@ class AcceptedFrameStore(
                 put("image_height", height)
                 put("timestamp", Instant.now().toString())
                 put("sensor_timestamp_ns", sensorTimestampNs ?: JSONObject.NULL)
+                captureMetadata?.appendToJson(this)
                 put("marker_count", detection.markerCount)
                 put("charuco_corner_count", detection.charucoCornerCount)
                 put("sharpness", sharpness)

@@ -22,7 +22,10 @@ class FrameAcceptanceController {
         sharpness: Double,
         frameWidth: Int,
         frameHeight: Int,
-        acceptedCount: Int
+        acceptedCount: Int,
+        captureMetadata: FrameMetadata? = null,
+        captureStability: CaptureStabilityState? = null,
+        autoCaptureActive: Boolean = false
     ): AcceptanceDecision {
         if (acceptedCount >= AcceptanceConfig.MAX_ACCEPTED_FRAMES) {
             lastDecisionMessage = "rejected: max_accepted_frames_reached"
@@ -32,6 +35,15 @@ class FrameAcceptanceController {
         if (detection.status != "detected" || detection.bbox == null) {
             lastDecisionMessage = detection.rejectionReason ?: "board_not_detected"
             return AcceptanceDecision(false, lastDecisionMessage!!)
+        }
+
+        if (autoCaptureActive) {
+            val stability = captureStability
+                ?: CaptureStabilityState(CaptureStabilityStatus.METADATA_MISSING)
+            CaptureQualityGates.evaluate(captureMetadata, stability)?.let { gateReason ->
+                lastDecisionMessage = "rejected: $gateReason"
+                return AcceptanceDecision(false, lastDecisionMessage!!)
+            }
         }
 
         if (detection.charucoCornerCount < AcceptanceConfig.MIN_CHARUCO_CORNERS) {

@@ -31,7 +31,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
-import java.util.LinkedHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -72,15 +71,16 @@ class Camera2Controller(
     private val frameAnalysisPipeline = FrameAnalysisPipeline(
         context = applicationContext,
         cameraId = cameraId,
-        onSnapshot = onAnalysisSnapshot
+        onSnapshot = onAnalysisSnapshot,
+        metadataLookup = { timestampNs -> captureMetadataStore.lookup(timestampNs, consume = false) }
     )
 
     private val frameCounter = AtomicLong(0)
     private val streamActive = AtomicBoolean(false)
     private val saveRequested = AtomicBoolean(false)
     private val saveBusy = AtomicBoolean(false)
-    private val metadataLock = Any()
-    private val captureMetadataByTimestamp = LinkedHashMap<Long, FrameMetadata>()
+    private val captureMetadataStore = CaptureMetadataStore()
+    private val captureStabilityController = CaptureStabilityController()
 
     @Volatile
     private var shouldRun = false
@@ -187,6 +187,7 @@ class Camera2Controller(
 
     fun startAutoCapture() {
         frameAnalysisPipeline.startAutoCapture()
+        captureStabilityController.onAutoCaptureStarted()
         cameraHandler.post {
             calibrationCaptureLocked = false
             updateRepeatingCaptureRequest()
@@ -194,7 +195,7 @@ class Camera2Controller(
                 if (!released && shouldRun) {
                     calibrationCaptureLocked = true
                     updateRepeatingCaptureRequest()
-                    notifyStatus("Calibration capture: white balance locked")
+                    notifyStatus("Calibration capture: AWB locked, OIS/video stabilization off")
                 }
             }, CALIBRATION_LOCK_DELAY_MS)
         }
@@ -202,6 +203,7 @@ class Camera2Controller(
 
     fun stopAutoCapture() {
         frameAnalysisPipeline.stopAutoCapture()
+        captureStabilityController.onAutoCaptureStopped()
         cameraHandler.post {
             calibrationCaptureLocked = false
             updateRepeatingCaptureRequest()
@@ -386,20 +388,7 @@ class Camera2Controller(
             result: TotalCaptureResult
         ) {
             val timestamp = result[CaptureResult.SENSOR_TIMESTAMP] ?: return
-            val metadata = FrameMetadata(
-                exposureTimeNs = result[CaptureResult.SENSOR_EXPOSURE_TIME],
-                isoSensitivity = result[CaptureResult.SENSOR_SENSITIVITY],
-                focalLengthMm = result[CaptureResult.LENS_FOCAL_LENGTH]
-            )
-            synchronized(metadataLock) {
-                captureMetadataByTimestamp[timestamp] = metadata
-                while (captureMetadataByTimestamp.size > MAX_METADATA_ENTRIES) {
-                    captureMetadataByTimestamp.entries.iterator().run {
-                        next()
-                        remove()
-                    }
-                }
-            }
+            captureMetadataStore.store(FrameMetadata.fromCaptureResult(timestamp, result))
         }
     }
 
@@ -413,7 +402,15 @@ class Camera2Controller(
         image.use {
             val count = frameCounter.incrementAndGet()
             notifyFrameCount(count)
-            frameAnalysisPipeline.submitFrame(it, count, it.timestamp.takeIf { ts -> ts > 0L })
+            val sensorTimestampNs = it.timestamp.takeIf { ts -> ts > 0L }
+            val captureMetadata = captureMetadataStore.lookup(sensorTimestampNs, consume = false)
+            frameAnalysisPipeline.submitFrame(
+                image = it,
+                rawCount = count,
+                sensorTimestampNs = sensorTimestampNs,
+                captureMetadata = captureMetadata,
+                captureStability = captureStabilityController.evaluate(captureMetadata)
+            )
 
             if (saveRequested.compareAndSet(true, false)) {
                 try {
@@ -489,12 +486,7 @@ class Camera2Controller(
                     put("image_height", frame.height)
                     put("timestamp", frame.capturedAtUtc)
                     put("sensor_timestamp_ns", frame.sensorTimestampNs ?: JSONObject.NULL)
-                    put(
-                        "sensor_exposure_time_ns",
-                        metadata?.exposureTimeNs ?: JSONObject.NULL
-                    )
-                    put("iso_sensitivity", metadata?.isoSensitivity ?: JSONObject.NULL)
-                    put("focal_length_mm", metadata?.focalLengthMm ?: JSONObject.NULL)
+                    metadata?.appendToJson(this)
                     put(
                         "sensor_orientation",
                         frame.sensorOrientationDegrees ?: JSONObject.NULL
@@ -528,13 +520,11 @@ class Camera2Controller(
 
     private fun awaitCaptureMetadata(timestampNs: Long?): FrameMetadata? {
         if (timestampNs == null) return null
-        repeat(METADATA_WAIT_ATTEMPTS) {
-            synchronized(metadataLock) {
-                captureMetadataByTimestamp.remove(timestampNs)?.let { return it }
-            }
-            Thread.sleep(METADATA_WAIT_MILLIS)
+        repeat(CaptureMetadataStore.METADATA_WAIT_ATTEMPTS) {
+            captureMetadataStore.lookup(timestampNs, consume = true)?.let { return it }
+            Thread.sleep(CaptureMetadataStore.METADATA_WAIT_MILLIS)
         }
-        return synchronized(metadataLock) { captureMetadataByTimestamp.remove(timestampNs) }
+        return captureMetadataStore.lookup(timestampNs, consume = true)
     }
 
     private fun monitorInitialFrameRate(
@@ -594,7 +584,8 @@ class Camera2Controller(
         previewSurface = null
         selectedPreviewSize = null
         if (saveRequested.getAndSet(false)) saveBusy.set(false)
-        synchronized(metadataLock) { captureMetadataByTimestamp.clear() }
+        captureMetadataStore.clear()
+        captureStabilityController.onAutoCaptureStopped()
     }
 
     private fun notifyStreamConfigured(analysisSize: Size, previewSize: Size) {
@@ -660,6 +651,10 @@ class Camera2Controller(
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
                 )
+                set(
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF
+                )
             }
         }.build()
     }
@@ -673,12 +668,6 @@ private data class PendingFrame(
     val sensorOrientationDegrees: Int?,
     val displayRotationDegrees: Int?,
     val nv21: ByteArray
-)
-
-private data class FrameMetadata(
-    val exposureTimeNs: Long?,
-    val isoSensitivity: Int?,
-    val focalLengthMm: Float?
 )
 
 private fun chooseAnalysisCandidates(availableSizes: Array<out Size>): List<Size> {
@@ -845,11 +834,8 @@ private val FALLBACK_ANALYSIS_SIZE = Size(1920, 1440)
 private val PREFERRED_PREVIEW_SIZE = Size(1920, 1440)
 private const val CALIBRATION_LOCK_DELAY_MS = 2_500L
 private const val MAX_IMAGES = 3
-private const val MAX_METADATA_ENTRIES = 64
 private const val MIN_INITIAL_FRAMES = 4
 private const val INITIAL_FRAME_WINDOW_MILLIS = 4_000L
-private const val METADATA_WAIT_ATTEMPTS = 20
-private const val METADATA_WAIT_MILLIS = 10L
 private const val JPEG_QUALITY = 95
 private const val JSON_INDENT_SPACES = 2
 private const val TAG = "Camera2Controller"

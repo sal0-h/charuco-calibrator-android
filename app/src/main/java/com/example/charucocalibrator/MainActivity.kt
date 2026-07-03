@@ -418,6 +418,26 @@ private fun buildLiveStatsText(
         appendLine("markers: ${snapshot.markerCount}  corners: ${snapshot.charucoCornerCount}")
         appendLine("detection: ${snapshot.detectionStatus}")
         snapshot.rejectionReason?.let { appendLine("rejection: $it") }
+        snapshot.captureMetadata?.let { metadata ->
+            appendLine("ISO: ${metadata.isoSensitivity ?: "n/a"}")
+            appendLine(
+                "exposure: ${
+                    metadata.exposureTimeMs?.let { "%.2f ms".format(it) } ?: "n/a"
+                }"
+            )
+            appendLine("focus dist: ${metadata.lensFocusDistance?.let { "%.3f".format(it) } ?: "n/a"}")
+            appendLine(
+                "AF/AE/AWB: ${afStateName(metadata.afState)} / " +
+                    "${aeStateName(metadata.aeState)} / ${awbStateName(metadata.awbState)}"
+            )
+        }
+        snapshot.captureStabilityStatus?.let { status ->
+            appendLine("capture stability: $status")
+            snapshot.referenceFocusDistance?.let {
+                appendLine("reference focus: ${"%.3f".format(it)}")
+            }
+            snapshot.captureStabilityMessage?.let { appendLine("stability note: $it") }
+        }
     }
 }
 
@@ -431,7 +451,20 @@ private fun buildAcceptanceText(snapshot: FrameAnalysisSnapshot): String = build
 private fun buildCalibrationText(snapshot: FrameAnalysisSnapshot): String = buildString {
     appendLine("calibration: ${snapshot.calibrationStatus}")
     snapshot.calibrationReprojectionError?.let {
-        appendLine("reprojection error: ${"%.3f".format(it)} px")
+        appendLine("RMS reprojection: ${"%.3f".format(it)} px")
+    }
+    snapshot.calibrationMedianPerViewError?.let {
+        appendLine("median per-view: ${"%.3f".format(it)} px")
+    }
+    snapshot.calibrationP90PerViewError?.let {
+        appendLine("p90 per-view: ${"%.3f".format(it)} px")
+    }
+    snapshot.calibrationSolverVariant?.let {
+        appendLine("solver: $it")
+    }
+    snapshot.calibrationUsedFrames?.let { used ->
+        val dropped = snapshot.calibrationDroppedFrames ?: 0
+        appendLine("views: $used used, $dropped dropped")
     }
     if (
         snapshot.calibrationFx != null &&

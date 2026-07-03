@@ -11,4 +11,9 @@ object AcceptanceConfig {
     const val MIN_ASPECT_DELTA = 0.06
     const val MIN_FRAMES_FOR_CALIBRATION = 10
     const val MAX_PER_VIEW_REPROJECTION_ERROR_PX = 3.0
+    const val MAX_ISO = 1000
+    const val MAX_EXPOSURE_TIME_NS = 15_000_000L
+    const val MAX_FOCUS_DISTANCE_DELTA = 0.02f
+    const val REQUIRE_CAPTURE_METADATA = true
+    const val MIN_VIEWS_FOR_RATIONAL_MODEL = 25
 }
