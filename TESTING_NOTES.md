@@ -165,3 +165,81 @@ python scripts/calibrate_charuco_from_android_frames.py \
 Use the printed ChArUco board with 7x10 squares, 0.025 m square length,
 0.018 m marker length, and `DICT_5X5_100`. Live detection, automatic acceptance,
 and calibration steps will be added and expanded in later milestones.
+
+## ARCore Explorer v1 — manual test checklist (S23 Ultra)
+
+Prerequisites: Google Play Services for AR installed; camera permission granted.  
+Optional on Arch Linux host: `sudo pacman -S android-tools` then `adb pull ...`.
+
+### A. ChArUco regression (do first)
+
+1. Install debug APK (`./gradlew installDebug` or Android Studio Run).
+2. Open **Tools** → **ChArUco Calibrator**.
+3. Grant camera if prompted.
+4. Confirm `camera_id: 0` and analysis stream `4000×3000` (or documented fallback).
+5. Confirm live ChArUco detection, auto-capture, and calibration still work.
+6. Back to home — confirm no crash.
+
+### B. ARCore Explorer — session and UI
+
+1. From **Tools**, open **ARCore Explorer**.
+2. If ARCore missing: confirm install prompt; install Google Play Services for AR; return.
+3. Confirm GLES camera preview renders (portrait).
+4. Confirm tracking banner shows `TRACKING` / `PAUSED` / `STOPPED` + failure reason.
+5. Confirm intrinsics warning: ARCore ≠ Camera2 `camera_id 0` @ `4000×3000`.
+6. Confirm **image** intrinsics (~640×480) and **texture** intrinsics (~1920×1080) update live.
+
+### C. Depth and overlays
+
+1. Wait until depth stats show **valid % > 0** before exporting.
+2. Toggle overlay: Off / Depth / Confidence / Masked.
+3. Toggle depth source: **Smoothed** (default, denser) vs **Raw** (sparse patches normal).
+4. Confirm native depth resolution label (expect ~160×90) and alignment disclaimer.
+5. Overlay will look blocky/misaligned — expected for v1.
+
+### D. Snapshot export
+
+1. Tap **Export snapshot** (after depth valid % > 0).
+2. Confirm panel shows depth flags: `raw=true smoothed=true confidence=true` when available.
+3. Pull or **Share files**:
+   - Path: `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/arcore_snapshots/`
+   - `adb pull /sdcard/Android/data/com.example.charucocalibrator/files/arcore_snapshots/ .`
+4. Verify JSON + artifacts for one timestamp:
+   - `arcore_snapshot_<ts>.json`
+   - `arcore_raw_depth_<ts>.bin` (28800 bytes for 160×90) + `.png`
+   - `arcore_smoothed_depth_<ts>.bin` + `.png`
+   - `arcore_confidence_<ts>.png`
+5. In JSON: `raw_depth.valid_pixel_fraction` should be > 0; `bin_path` empty when `available: false`.
+6. If `charuco_calibration_result.json` exists: confirm scaled ChArUco vs ARCore Δfx/Δfy at **640×480** comparison grid.
+
+### E. Pass / fail criteria
+
+| Check | Pass |
+| --- | --- |
+| ChArUco unchanged | Camera2 id 0, calibration still runs |
+| ARCore session | Preview + tracking banner |
+| Intrinsics | Image + texture on screen |
+| Depth | valid % > 0 in good conditions |
+| Export | JSON + bin + PNGs with matching sizes |
+| No false claims | Do not use ARCore fx for ChArUco 4000×3000 calibration |
+
+## ARCore Explorer v1 (physical S23 Ultra)
+
+Prerequisites: Google Play Services for AR installed; camera permission granted.
+
+1. From **Tools** home screen, open **ARCore Explorer**.
+2. Confirm ARCore install prompt works if ARCore is missing; return after install.
+3. Confirm GLES2 camera preview renders (portrait).
+4. Confirm tracking banner shows `TRACKING` / `PAUSED` / `NOT_TRACKING` and failure reason when applicable.
+5. Confirm intrinsics warning references Camera2 `camera_id 0` at `4000x3000`.
+6. Confirm image and texture intrinsics panels update live.
+7. Toggle overlay modes: Off / Depth / Confidence / Masked.
+8. Toggle depth source Raw vs Smoothed — preview should not restart (read-path only).
+9. Confirm native depth resolution label and approximate-alignment disclaimer.
+10. Tap **Export snapshot**; confirm files under `.../files/arcore_snapshots/`:
+    - `arcore_snapshot_<epoch>.json`
+    - `arcore_raw_depth_<epoch>.bin` + `.png`
+    - `arcore_confidence_<epoch>.png`
+    - `arcore_smoothed_depth_<epoch>.bin` + `.png` when smoothed depth is available
+11. If `charuco_calibration_result.json` exists, confirm ChArUco diff panel shows Δfx/Δfy/Δcx/Δcy and dimension mismatch warning when sizes differ.
+12. Confirm ChArUco Calibrator still works unchanged (`camera_id 0`, `4000x3000`).

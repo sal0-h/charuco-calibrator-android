@@ -130,6 +130,106 @@ Inspection method: downloaded the published AAR and inspected
 - Verify intrinsics are plausible for `4000x3000` sensor-native frames.
 - Confirm offline Python script reproduces similar results from exported frames.
 - Confirm calibration JSON `orientation_note` matches saved frame metadata.
+- **ARCore Explorer v1 (Gate 2):** live preview, depth raw/smoothed toggle, snapshot export to `arcore_snapshots/`, ChArUco intrinsics diff panel.
+
+## ARCore Explorer v1 audit (2026-07-04)
+
+**Branch:** `feat/arcore-explorer-a863` (based on `main` @ `1f59cee`)  
+**Git:** ARCore work is **uncommitted** — modified tracked files + untracked `arcore/` and `ui/tools/arcore/` trees.  
+**No PR opened. Not pushed.**
+
+### Commands run (audit)
+
+```bash
+git status
+git log --oneline --max-count=10
+./gradlew assembleDebug --no-daemon    # BUILD SUCCESSFUL
+./gradlew lintDebug --no-daemon        # BUILD SUCCESSFUL (27 warnings, 0 errors)
+./gradlew testDebugUnitTest --no-daemon # BUILD SUCCESSFUL (includes CharucoIntrinsicsAlignerTest)
+```
+
+### ChArUco path integrity
+
+- `CharucoCalibratorScreen.kt` — **no diff vs `main`**
+- `Camera2Controller.kt` — **no diff vs `main`**
+- Still uses Camera2 `camera_id "0"`, preferred `4000×3000` analysis grid
+- No CameraX dependency reintroduced
+- ChArUco **not re-tested on device during this audit** (compile-only confirmation)
+
+### What was implemented (code present, uncommitted)
+
+| Area | Status |
+| --- | --- |
+| Home / tool picker with ChArUco + ARCore Explorer | Yes |
+| ARCore session + GLSurfaceView preview (GLES2 external-OES via Compose `AndroidView`) | Yes (code) |
+| Tracking state banner | Yes (code) |
+| Image + texture intrinsics display | Yes (code) |
+| Raw + smoothed depth read paths (`AUTOMATIC` depth mode) | Yes (code) |
+| Confidence image read | Yes (code) |
+| 4 overlay modes + raw/smoothed source toggle | Yes (code) |
+| Snapshot JSON + bin + PNG export | Yes (code) |
+| ChArUco intrinsics diff (scaled to ARCore image size) | Yes (code) |
+| Share export via FileProvider | Yes (code) |
+| ARCore availability / install check | Yes (code) |
+
+### Device evidence (human tester — S23 Ultra)
+
+User pulled `~/Downloads/arcore_snapshots/` with multiple exports. Latest good snapshot (`1783121174764`):
+
+- `TRACKING`, ARCore image **640×480**, depth **160×90**
+- Raw depth **92.3%** valid; smoothed **100%**; bin files **28800 B** (correct)
+- Early snapshot (`1783113279541`) had **0%** valid depth (exported before depth ready)
+
+**Not verified in audit:** ChArUco calibrator regression on device after ARCore install; live overlay quality; ARCore physical camera identity vs Camera2 id 0.
+
+### Known limitations (honest)
+
+- ARCore image stream ≠ ChArUco Camera2 stream (resolution, likely camera path).
+- Depth overlay is **letterboxed approximate alignment**, not pixel-registered to preview.
+- Depth resolution **160×90** — blocky; not useful for ChArUco-scale metrology.
+- ARCore is **not** a ChArUco calibration replacement.
+- First export after session start can capture **empty depth** if user taps too early.
+- Portrait lock on `MainActivity` affects entire app.
+- Physical S23 Ultra test required for any “works on device” claim beyond export file evidence above.
+- CI/sandbox: compile + lint + unit tests only; no ARCore hardware in build environment.
+
+### Incomplete / not done
+
+- No git commit for ARCore work on feature branch
+- No PR to `main`
+- No automated instrumented ARCore tests
+- Homography-correct depth overlay (deferred)
+- Shared Camera ARCore + Camera2 (out of scope)
+- Pose in export JSON (out of scope)
+
+## ARCore Explorer v1 (feat/arcore-explorer-a863)
+
+Milestones M0–M7 implemented on branch `feat/arcore-explorer-a863`:
+
+| Milestone | Scope |
+| --- | --- |
+| M0 | `AppDestination.ArCoreExplorer`, Home card, AppRoot wiring |
+| M1 | `com.google.ar:core:1.46.0`, manifest AR metadata, `ArCoreCapabilityChecker` |
+| M2 | `ArCoreSessionController` + GLES2 external-OES `GLSurfaceView` preview, portrait lock |
+| M3 | Image/texture intrinsics, tracking banner, Camera2 mismatch warning |
+| M4 | Raw/smoothed depth read paths, confidence, heatmap overlay modes (no session reconfigure on toggle) |
+| M5 | Snapshot export to `getExternalFilesDir(null)/arcore_snapshots/` |
+| M6 | ChArUco `charuco_calibration_result.json` diff vs ARCore image intrinsics |
+| M7 | Docs + `assembleDebug` / `lintDebug` |
+
+### Build / lint (ARCore Explorer)
+
+- `assembleDebug` and `lintDebug` passed (CI sandbox, no physical device).
+
+### Output paths (ARCore)
+
+Base directory:
+`/storage/emulated/0/Android/data/com.example.charucocalibrator/files/arcore_snapshots/`
+
+- Snapshot JSON: `arcore_snapshot_<epochMs>.json`
+- Raw depth: `arcore_raw_depth_<epochMs>.bin` (uint16 LE mm) + `.png`
+- Smoothed depth: `arcore_smoothed_depth_<epochMs>.bin` + `.png` (when available)
+- Confidence: `arcore_confidence_<epochMs>.png`
 
 ## Output paths
 

@@ -4,4 +4,10 @@
     <string name="tool_charuco_title">ChArUco Calibrator</string>
     <string name="tool_charuco_subtitle">Camera2 board calibration</string>
     <string name="nav_back">Back</string>
+    <string name="tool_arcore_title">ARCore Explorer</string>
+    <string name="tool_arcore_subtitle">ARCore depth, intrinsics, and snapshot export</string>
+    <string name="arcore_explorer_title">ARCore Explorer</string>
+    <string name="arcore_intrinsics_warning">ARCore intrinsics and depth refer to the ARCore session stream, not Camera2 camera_id 0 at 4000×3000.</string>
+    <string name="arcore_depth_alignment_disclaimer">Depth is lower resolution than the camera preview and is letterboxed (not pixel-aligned). Use Smoothed for denser coverage; Raw is sparse by design.</string>
+    <string name="arcore_sparse_depth_hint">Raw depth covers only ~%1$.0f%% of pixels — patches are normal. Try Smoothed source.</string>
 </resources>
