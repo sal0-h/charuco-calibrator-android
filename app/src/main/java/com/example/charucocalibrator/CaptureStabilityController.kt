@@ -1,7 +1,8 @@
 package com.example.charucocalibrator
 
 import android.hardware.camera2.CaptureResult
-import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.sqrt
 
 enum class FocusPolicy {
     METADATA_GATE_ONLY,
@@ -66,7 +67,7 @@ class CaptureStabilityController(
 
         when (focusPolicy) {
             FocusPolicy.METADATA_GATE_ONLY -> {
-                if (isAfHunting(metadata.afState)) {
+                if (isAfActivelyHunting(metadata.afState)) {
                     return CaptureStabilityState(
                         status = CaptureStabilityStatus.FOCUS_UNSTABLE,
                         message = "af_not_stable"
@@ -75,27 +76,18 @@ class CaptureStabilityController(
             }
             FocusPolicy.AF_TRIGGER_THEN_REJECT_DRIFT -> {
                 trackFocus(metadata)
-                if (referenceFocusDistance == null) {
-                    if (isAfStable(metadata.afState) && metadata.lensFocusDistance != null) {
-                        referenceFocusDistance = metadata.lensFocusDistance
-                    } else if (isAfHunting(metadata.afState)) {
-                        return CaptureStabilityState(
-                            status = CaptureStabilityStatus.FOCUS_UNSTABLE,
-                            message = "af_not_stable"
-                        )
-                    }
-                } else {
-                    val current = metadata.lensFocusDistance
-                    if (current != null) {
-                        val delta = abs(current - referenceFocusDistance!!)
-                        if (delta > AcceptanceConfig.MAX_FOCUS_DISTANCE_DELTA) {
-                            return CaptureStabilityState(
-                                status = CaptureStabilityStatus.FOCUS_UNSTABLE,
-                                referenceFocusDistance = referenceFocusDistance,
-                                message = "focus_unstable"
-                            )
-                        }
-                    }
+                if (isAfActivelyHunting(metadata.afState)) {
+                    return CaptureStabilityState(
+                        status = CaptureStabilityStatus.FOCUS_UNSTABLE,
+                        message = "af_not_stable"
+                    )
+                }
+                if (focusOscillationTooHigh()) {
+                    return CaptureStabilityState(
+                        status = CaptureStabilityStatus.FOCUS_UNSTABLE,
+                        referenceFocusDistance = referenceFocusDistance,
+                        message = "focus_unstable"
+                    )
                 }
             }
             FocusPolicy.MANUAL_FIXED_FOCUS -> Unit
@@ -116,7 +108,7 @@ class CaptureStabilityController(
                 }
                 if (
                     referenceFocusDistance == null &&
-                    isAfStable(metadata.afState) &&
+                    isAfConverged(metadata.afState) &&
                     recentFocusDistances.size >= 3
                 ) {
                     referenceFocusDistance = recentFocusDistances.average().toFloat()
@@ -125,16 +117,37 @@ class CaptureStabilityController(
         }
     }
 
-    private fun isAfHunting(afState: Int?): Boolean = when (afState) {
-        CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN,
+    /**
+     * Continuous AF spends much of its time in PASSIVE_SCAN while fine-tuning; only
+     * ACTIVE_SCAN indicates an explicit hunt that is unsafe to accept.
+     */
+    private fun isAfActivelyHunting(afState: Int?): Boolean =
+        afState == CaptureResult.CONTROL_AF_STATE_ACTIVE_SCAN
+
+    private fun isAfConverged(afState: Int?): Boolean = when (afState) {
+        CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED,
+        CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED,
         CaptureResult.CONTROL_AF_STATE_PASSIVE_SCAN -> true
         else -> false
     }
 
-    private fun isAfStable(afState: Int?): Boolean = when (afState) {
-        CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED,
-        CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED -> true
-        else -> false
+    /**
+     * Detect AF oscillation via short-window variance instead of a fixed reference.
+     * Smooth pose motion changes focus gradually; hunting produces high variance.
+     */
+    private fun focusOscillationTooHigh(): Boolean {
+        if (recentFocusDistances.size < AcceptanceConfig.MIN_FOCUS_SAMPLES_FOR_VARIANCE) {
+            return false
+        }
+        val values = recentFocusDistances.toList()
+        val mean = values.average().toFloat()
+        if (mean <= 0f) return false
+        val variance = values.map { distance ->
+            val delta = distance - mean
+            delta * delta
+        }.average()
+        val relativeStdDev = sqrt(variance).toFloat() / max(mean, 0.05f)
+        return relativeStdDev > AcceptanceConfig.MAX_FOCUS_RELATIVE_STD_DEV
     }
 }
 

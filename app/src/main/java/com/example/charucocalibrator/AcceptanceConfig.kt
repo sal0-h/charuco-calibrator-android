@@ -13,7 +13,9 @@ object AcceptanceConfig {
     const val MAX_PER_VIEW_REPROJECTION_ERROR_PX = 3.0
     const val MAX_ISO = 1000
     const val MAX_EXPOSURE_TIME_NS = 15_000_000L
-    const val MAX_FOCUS_DISTANCE_DELTA = 0.02f
+    /** Max relative focus-distance oscillation (diopters) in a short window; catches AF hunting. */
+    const val MAX_FOCUS_RELATIVE_STD_DEV = 0.08f
+    const val MIN_FOCUS_SAMPLES_FOR_VARIANCE = 5
     const val REQUIRE_CAPTURE_METADATA = true
     const val MIN_VIEWS_FOR_RATIONAL_MODEL = 25
 }
