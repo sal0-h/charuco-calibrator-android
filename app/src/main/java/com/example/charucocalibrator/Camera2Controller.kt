@@ -194,7 +194,7 @@ class Camera2Controller(
                 if (!released && shouldRun) {
                     calibrationCaptureLocked = true
                     updateRepeatingCaptureRequest()
-                    notifyStatus("Calibration capture: exposure and white balance locked")
+                    notifyStatus("Calibration capture: white balance locked")
                 }
             }, CALIBRATION_LOCK_DELAY_MS)
         }
@@ -646,12 +646,7 @@ class Camera2Controller(
         preview: Surface,
         readerSurface: Surface
     ): CaptureRequest {
-        val template = if (calibrationCaptureLocked) {
-            CameraDevice.TEMPLATE_STILL_CAPTURE
-        } else {
-            CameraDevice.TEMPLATE_PREVIEW
-        }
-        return camera.createCaptureRequest(template).apply {
+        return camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             addTarget(preview)
             addTarget(readerSurface)
             set(
@@ -660,7 +655,6 @@ class Camera2Controller(
             )
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             if (calibrationCaptureLocked) {
-                set(CaptureRequest.CONTROL_AE_LOCK, true)
                 set(CaptureRequest.CONTROL_AWB_LOCK, true)
                 set(
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,

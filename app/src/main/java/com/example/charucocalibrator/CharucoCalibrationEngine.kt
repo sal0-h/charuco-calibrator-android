@@ -103,7 +103,10 @@ class CharucoCalibrationEngine {
             droppedViews > 0 &&
             filtered.size >= AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION
         ) {
-            Log.i(TAG, "Dropping $droppedViews high-error views before final solve")
+            Log.i(
+                TAG,
+                "Dropping $droppedViews/${correspondences.size} high-error views before final solve"
+            )
             firstPass.cameraMatrix?.release()
             firstPass.distortion?.release()
             solveCalibration(
@@ -133,10 +136,22 @@ class CharucoCalibrationEngine {
             return CharucoCalibrationResult(success = false, statusMessage = "Calibration produced no distortion")
         }
 
+        val usedViews = finalPass.perViewErrors?.size ?: filtered.size
+        val medianViewError = finalPass.perViewErrors?.median()
         return CharucoCalibrationResult(
             success = true,
-            statusMessage =
-                "Calibration succeeded with ${finalPass.perViewErrors?.size ?: filtered.size} views",
+            statusMessage = buildString {
+                append("Calibration succeeded with $usedViews views")
+                finalPass.reprojectionErrorPx?.let {
+                    append(", RMS=${"%.2f".format(it)} px")
+                }
+                medianViewError?.let {
+                    append(", median view=${"%.2f".format(it)} px")
+                }
+                if (droppedViews > 0) {
+                    append(", dropped $droppedViews")
+                }
+            },
             reprojectionErrorPx = finalPass.reprojectionErrorPx,
             fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
             fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
@@ -144,7 +159,7 @@ class CharucoCalibrationEngine {
             cy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
             cameraMatrix = cameraMatrix,
             distortionCoefficients = distortion,
-            usedFrames = finalPass.perViewErrors?.size ?: filtered.size
+            usedFrames = usedViews
         )
     }
 
@@ -173,8 +188,16 @@ class CharucoCalibrationEngine {
         if (perViewErrors == null || perViewErrors.size != correspondences.size) {
             return correspondences
         }
+
+        val median = perViewErrors.sorted().let { sorted ->
+            sorted[sorted.size / 2]
+        }
+        val threshold = maxOf(
+            AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX,
+            median * 2.0
+        )
         return correspondences.filterIndexed { index, _ ->
-            perViewErrors[index] <= AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX
+            perViewErrors[index] <= threshold
         }
     }
 
@@ -186,12 +209,7 @@ class CharucoCalibrationEngine {
         val objectPointSets = correspondences.map { it.set.objectPoints }
         val imagePointSets = correspondences.map { it.set.imagePoints }
 
-        val cameraMatrix = CameraMatrixSeeder.seed(
-            imageWidth = imageSize.width.toInt(),
-            imageHeight = imageSize.height.toInt(),
-            focalLengthMm = hints.focalLengthMm,
-            sensorPhysicalSize = hints.sensorPhysicalSize
-        )
+        val cameraMatrix = Mat.eye(3, 3, CvType.CV_64F)
         val distortion = Mat.zeros(1, 5, CvType.CV_64F)
         val rvecs = ArrayList<Mat>()
         val tvecs = ArrayList<Mat>()
@@ -199,9 +217,7 @@ class CharucoCalibrationEngine {
         val stdExtrinsics = Mat()
         val perViewErrors = Mat()
 
-        val flags = Calib3d.CALIB_USE_INTRINSIC_GUESS or
-            Calib3d.CALIB_FIX_ASPECT_RATIO or
-            Calib3d.CALIB_FIX_K3
+        val flags = Calib3d.CALIB_FIX_K3
 
         return try {
             val reprojectionError = Calib3d.calibrateCameraExtended(
@@ -337,6 +353,12 @@ class CharucoCalibrationEngine {
 
     private fun DoubleArray.toJsonArray(): JSONArray =
         JSONArray().also { array -> forEach(array::put) }
+
+    private fun DoubleArray.median(): Double {
+        if (isEmpty()) return 0.0
+        val sorted = sorted()
+        return sorted[sorted.size / 2]
+    }
 
     companion object {
         const val CALIBRATION_OUTPUT_FILE = "charuco_calibration_result.json"
