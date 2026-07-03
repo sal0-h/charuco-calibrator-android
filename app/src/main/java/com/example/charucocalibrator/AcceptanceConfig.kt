@@ -12,7 +12,8 @@ object AcceptanceConfig {
     const val MIN_FRAMES_FOR_CALIBRATION = 10
     const val MAX_PER_VIEW_REPROJECTION_ERROR_PX = 3.0
     const val MAX_ISO = 1000
-    const val MAX_EXPOSURE_TIME_NS = 15_000_000L
+    /** ~1/30 s; indoor AE often lands around 15–25 ms on phone cameras. */
+    const val MAX_EXPOSURE_TIME_NS = 33_000_000L
     /** Max relative focus-distance oscillation (diopters) in a short window; catches AF hunting. */
     const val MAX_FOCUS_RELATIVE_STD_DEV = 0.08f
     const val MIN_FOCUS_SAMPLES_FOR_VARIANCE = 5
