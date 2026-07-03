@@ -29,6 +29,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -85,8 +86,9 @@ fun ArCoreExplorerScreen(
     var installMessage by remember { mutableStateOf<String?>(null) }
     var sessionError by remember { mutableStateOf<String?>(null) }
     var frameState by remember { mutableStateOf(ArCoreFrameState()) }
-    var overlayMode by remember { mutableStateOf(DepthOverlayMode.RawDepthHeatmap) }
+    var overlayMode by remember { mutableStateOf(DepthOverlayMode.Off) }
     var depthSource by remember { mutableStateOf(DepthSourceToggle.Smoothed) }
+    var experimentalOverlayEnabled by remember { mutableStateOf(false) }
     var lastExport by remember { mutableStateOf<ArCoreSnapshotResult?>(null) }
     var exportInProgress by remember { mutableStateOf(false) }
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -122,10 +124,6 @@ fun ArCoreExplorerScreen(
     }
 
     val charucoDiff = rememberCharucoDiff(context, frameState)
-    val activeDepth = when (depthSource) {
-        DepthSourceToggle.Raw -> frameState.rawDepth
-        DepthSourceToggle.Smoothed -> frameState.smoothedDepth
-    }
 
     Column(
         modifier = modifier
@@ -197,6 +195,19 @@ fun ArCoreExplorerScreen(
                 else -> {
                     sessionError?.let { StatusMessage(it) }
 
+                    Text(
+                        text = stringResource(R.string.arcore_intrinsics_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+
+                    ArCoreStatusPanel(
+                        frameState = frameState,
+                        depthModeLabel = frameState.depthModeLabel,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -215,60 +226,20 @@ fun ArCoreExplorerScreen(
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
-                        ArCoreDepthOverlay(
-                            frameState = frameState,
-                            overlayMode = overlayMode,
-                            depthSource = depthSource,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-
-                    Text(
-                        text = stringResource(R.string.arcore_depth_alignment_disclaimer),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                    activeDepth?.let { depth ->
-                        Text(
-                            text = "Native depth resolution: ${depth.width}×${depth.height} (${depthSource.name.lowercase()}) · valid ${"%.0f".format(depth.stats.validPixelFraction * 100)}%",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                        if (depthSource == DepthSourceToggle.Raw && depth.stats.validPixelFraction < 0.5f) {
-                            Text(
-                                text = stringResource(
-                                    R.string.arcore_sparse_depth_hint,
-                                    depth.stats.validPixelFraction * 100f,
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.padding(top = 4.dp),
+                        if (experimentalOverlayEnabled && overlayMode != DepthOverlayMode.Off) {
+                            ArCoreDepthOverlay(
+                                frameState = frameState,
+                                overlayMode = overlayMode,
+                                depthSource = depthSource,
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
-                    } ?: Text(
-                        text = "Depth not available in current frame.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
+                    }
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                    DepthControls(
-                        overlayMode = overlayMode,
-                        depthSource = depthSource,
-                        rawAvailable = frameState.rawDepth != null,
-                        smoothedAvailable = frameState.smoothedDepth != null,
-                        onOverlayModeChange = { overlayMode = it },
-                        onDepthSourceChange = { depthSource = it },
-                    )
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    ArCoreStatusPanel(
+                    ArCoreDiagnosticsPanel(
                         frameState = frameState,
-                        depthModeLabel = frameState.depthModeLabel,
                         modifier = Modifier.padding(bottom = 12.dp),
                     )
 
@@ -279,6 +250,24 @@ fun ArCoreExplorerScreen(
                     )
 
                     DepthStatsPanel(frameState = frameState)
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    ExperimentalOverlaySection(
+                        enabled = experimentalOverlayEnabled,
+                        onEnabledChange = { enabled ->
+                            experimentalOverlayEnabled = enabled
+                            if (!enabled) {
+                                overlayMode = DepthOverlayMode.Off
+                            }
+                        },
+                        overlayMode = overlayMode,
+                        depthSource = depthSource,
+                        rawAvailable = frameState.rawDepth != null,
+                        smoothedAvailable = frameState.smoothedDepth != null,
+                        onOverlayModeChange = { overlayMode = it },
+                        onDepthSourceChange = { depthSource = it },
+                    )
 
                     ArCoreSnapshotPanel(
                         lastExport = lastExport,
@@ -315,7 +304,7 @@ fun ArCoreExplorerScreen(
                                     ) {
                                         exportError =
                                             "Exported JSON only — no depth/confidence in this frame. " +
-                                                "Move the phone slowly and ensure tracking is active."
+                                                "Wait for valid depth stats, then export again."
                                     }
                                 } catch (error: Exception) {
                                     exportError = error.message ?: error.javaClass.simpleName
@@ -368,7 +357,9 @@ private fun StatusMessage(message: String) {
 }
 
 @Composable
-private fun DepthControls(
+private fun ExperimentalOverlaySection(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
     overlayMode: DepthOverlayMode,
     depthSource: DepthSourceToggle,
     rawAvailable: Boolean,
@@ -376,37 +367,66 @@ private fun DepthControls(
     onOverlayModeChange: (DepthOverlayMode) -> Unit,
     onDepthSourceChange: (DepthSourceToggle) -> Unit,
 ) {
-    Column {
-        Text(text = "Overlay mode", style = MaterialTheme.typography.titleSmall)
-        Row(modifier = Modifier.padding(top = 8.dp)) {
-            DepthOverlayMode.entries.forEach { mode ->
-                FilterChip(
-                    selected = overlayMode == mode,
-                    onClick = { onOverlayModeChange(mode) },
-                    label = { Text(mode.label()) },
-                    modifier = Modifier.padding(end = 8.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.arcore_experimental_overlay_title),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = stringResource(R.string.arcore_experimental_overlay_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
+            Switch(checked = enabled, onCheckedChange = onEnabledChange)
         }
-        Text(
-            text = "Depth source (read path only)",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(top = 12.dp),
-        )
-        Row(modifier = Modifier.padding(top = 8.dp)) {
-            FilterChip(
-                selected = depthSource == DepthSourceToggle.Raw,
-                onClick = { onDepthSourceChange(DepthSourceToggle.Raw) },
-                enabled = rawAvailable,
-                label = { Text("Raw") },
-                modifier = Modifier.padding(end = 8.dp),
+        if (enabled) {
+            Text(
+                text = "Overlay mode",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 12.dp),
             )
-            FilterChip(
-                selected = depthSource == DepthSourceToggle.Smoothed,
-                onClick = { onDepthSourceChange(DepthSourceToggle.Smoothed) },
-                enabled = smoothedAvailable,
-                label = { Text("Smoothed") },
+            Row(modifier = Modifier.padding(top = 8.dp)) {
+                DepthOverlayMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = overlayMode == mode,
+                        onClick = { onOverlayModeChange(mode) },
+                        label = { Text(mode.label()) },
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                }
+            }
+            Text(
+                text = "Depth read path (export always captures both when available)",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
             )
+            Row(modifier = Modifier.padding(top = 8.dp)) {
+                FilterChip(
+                    selected = depthSource == DepthSourceToggle.Raw,
+                    onClick = { onDepthSourceChange(DepthSourceToggle.Raw) },
+                    enabled = rawAvailable,
+                    label = { Text("Raw") },
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                FilterChip(
+                    selected = depthSource == DepthSourceToggle.Smoothed,
+                    onClick = { onDepthSourceChange(DepthSourceToggle.Smoothed) },
+                    enabled = smoothedAvailable,
+                    label = { Text("Smoothed") },
+                )
+            }
         }
     }
 }
@@ -420,32 +440,50 @@ private fun DepthStatsPanel(frameState: ArCoreFrameState) {
             .padding(12.dp),
     ) {
         Text(text = "Depth stats", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = "Depth values are ARCore estimates in meters; not verified against ChArUco calibration.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         frameState.rawDepth?.let { raw ->
             Text(
-                text = "Raw: valid=${"%.1f".format(raw.stats.validPixelFraction * 100)}% " +
+                text = "Raw ${raw.width}×${raw.height}: valid=${"%.1f".format(raw.stats.validPixelFraction * 100)}% " +
                     "min=${"%.2f".format(raw.stats.minDepthM)}m " +
                     "median=${"%.2f".format(raw.stats.medianDepthM)}m " +
                     "max=${"%.2f".format(raw.stats.maxDepthM)}m",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-        }
+        } ?: Text(
+            text = "Raw depth: not available",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         frameState.smoothedDepth?.let { smoothed ->
             Text(
-                text = "Smoothed: valid=${"%.1f".format(smoothed.stats.validPixelFraction * 100)}% " +
+                text = "Smoothed ${smoothed.width}×${smoothed.height}: valid=${"%.1f".format(smoothed.stats.validPixelFraction * 100)}% " +
                     "median=${"%.2f".format(smoothed.stats.medianDepthM)}m",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-        }
+        } ?: Text(
+            text = "Smoothed depth: not available",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         frameState.confidence?.let { conf ->
             Text(
-                text = "Confidence: mean=${"%.0f".format(conf.stats.meanConfidence)} " +
+                text = "Confidence ${conf.width}×${conf.height}: mean=${"%.0f".format(conf.stats.meanConfidence)} " +
                     "high=${"%.1f".format(conf.stats.highConfidenceFraction * 100)}%",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )
-        }
+        } ?: Text(
+            text = "Confidence: not available",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 

@@ -55,6 +55,10 @@ data class ExportSmoothedDepthSection(
     val available: Boolean,
     val width: Int = 0,
     val height: Int = 0,
+    val validPixelFraction: Float = 0f,
+    val minDepthM: Float = 0f,
+    val medianDepthM: Float = 0f,
+    val maxDepthM: Float = 0f,
     val binPath: String = "",
     val pngPath: String = "",
 ) {
@@ -62,6 +66,10 @@ data class ExportSmoothedDepthSection(
         put("available", available)
         put("width", width)
         put("height", height)
+        put("valid_pixel_fraction", validPixelFraction.toDouble())
+        put("min_depth_m", minDepthM.toDouble())
+        put("median_depth_m", medianDepthM.toDouble())
+        put("max_depth_m", maxDepthM.toDouble())
         put("bin_path", binPath)
         put("png_path", pngPath)
     }
@@ -138,9 +146,12 @@ data class ExportCharucoIntrinsicsDiff(
 data class ArCoreSnapshotExport(
     val source: String = "arcore_explorer",
     val deviceHint: String = "Samsung Galaxy S23 Ultra",
+    val streamEquivalenceWarning: String =
+        "ARCore stream is not assumed equivalent to Camera2 camera_id 0 4000x3000 ChArUco stream.",
     val camera2TargetCameraIdNote: String =
-        "ChArUco calibration uses Camera2 camera_id 0 at 4000x3000 sensor-native; " +
-            "ARCore stream resolution and intrinsics differ.",
+        "ChArUco tool uses Camera2 camera_id 0 at 4000x3000; ARCore session is separate and not proven to use the same physical camera.",
+    val overlayAlignmentNote: String =
+        "Depth/confidence PNG artifacts are not pixel-aligned to the GLES preview; overlay in-app is approximate only.",
     val timestampNs: Long,
     val androidCameraTimestampNs: Long,
     val trackingState: String,
@@ -156,7 +167,9 @@ data class ArCoreSnapshotExport(
     fun toJson(): JSONObject = JSONObject().apply {
         put("source", source)
         put("device_hint", deviceHint)
+        put("stream_equivalence_warning", streamEquivalenceWarning)
         put("camera2_target_camera_id_note", camera2TargetCameraIdNote)
+        put("overlay_alignment_note", overlayAlignmentNote)
         put("timestamp_ns", timestampNs)
         put("android_camera_timestamp_ns", androidCameraTimestampNs)
         put("tracking_state", trackingState)

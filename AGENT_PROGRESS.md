@@ -202,6 +202,52 @@ User pulled `~/Downloads/arcore_snapshots/` with multiple exports. Latest good s
 - Shared Camera ARCore + Camera2 (out of scope)
 - Pose in export JSON (out of scope)
 
+## ARCore Explorer data flow (diagnostics reference)
+
+### Preview rendering
+
+1. `ArCoreExplorerScreen` embeds a `GLSurfaceView` via Compose `AndroidView`.
+2. `ArCorePreviewRenderer` (GLES 2.0) calls `Session.update()` each frame on the GL thread.
+3. Camera frames are drawn with an external-OES texture (`session.setCameraTextureName()`).
+4. **Preview resolution on screen** = the `GLSurfaceView` layout size (portrait box, ~3:4 aspect). This is **not** the same pixel grid as image or depth intrinsics.
+
+### Stream resolutions (S23 Ultra — observed from device exports, not guaranteed on all devices)
+
+| Stream | API | Typical size (S23 Ultra) | Notes |
+| --- | --- | --- | --- |
+| **Image intrinsics** | `Camera.getImageIntrinsics()` | **640×480** | CPU / tracking stream grid |
+| **Texture intrinsics** | `Camera.getTextureIntrinsics()` | **1920×1080** | GLES preview texture grid |
+| **Raw depth** | `Frame.acquireRawDepthImage16Bits()` | **160×90** | Sparse; valid ~90% when tracking |
+| **Smoothed depth** | `Frame.acquireDepthImage16Bits()` | **160×90** | Denser fill than raw |
+| **Confidence** | `Frame.acquireRawDepthConfidenceImage()` | **160×90** | Y8, matches raw depth grid |
+
+Depth mode: `Config.DepthMode.AUTOMATIC` when supported (else `RAW_DEPTH_ONLY`). Raw vs Smoothed UI toggle only changes read path — no session reconfigure.
+
+### Overlay alignment
+
+**Approximate only — not pixel-perfect.**
+
+- Depth/confidence bitmaps are letterboxed over the preview `GLSurfaceView` without homography.
+- Depth is 160×90; preview texture is 1920×1080; on-screen box is yet another size.
+- **Overlay is OFF by default** behind an “Experimental depth overlay” switch.
+
+### Why ARCore ≠ ChArUco Camera2 path
+
+| | ChArUco Calibrator | ARCore Explorer |
+| --- | --- | --- |
+| API | Camera2 direct | ARCore `Session` |
+| Camera selection | Hardcoded `camera_id "0"` | ARCore internal (not exposed as Camera2 id) |
+| Image size | **4000×3000** sensor-native | **640×480** image / **1920×1080** texture |
+| Purpose | Board calibration | AR tracking / coarse depth probe |
+
+**Not proven:** same physical camera, metric depth accuracy, interchangeable intrinsics.
+
+### Snapshot export
+
+Path: `getExternalFilesDir(null)/arcore_snapshots/`
+
+JSON includes `stream_equivalence_warning`, image/texture intrinsics, raw/smoothed/confidence metadata, tracking state, timestamps. Bin/PNG artifacts when depth is available in frame.
+
 ## ARCore Explorer v1 (feat/arcore-explorer-a863)
 
 Milestones M0–M7 implemented on branch `feat/arcore-explorer-a863`:

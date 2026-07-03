@@ -56,7 +56,7 @@ fun ArCoreIntrinsicsPanel(
             height = frameState.textureIntrinsics.height,
         )
         Text(
-            text = "ChArUco vs ARCore (same size)",
+            text = "ChArUco reference (scaled to ARCore image size)",
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.padding(top = 12.dp),
         )
