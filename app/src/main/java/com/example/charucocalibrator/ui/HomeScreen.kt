@@ -20,6 +20,7 @@ import com.example.charucocalibrator.R
 fun HomeScreen(
     onOpenCharuco: () -> Unit,
     onOpenArCore: () -> Unit,
+    onOpenStereo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -70,6 +71,28 @@ fun HomeScreen(
                 )
                 Text(
                     text = stringResource(R.string.tool_arcore_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp)
+                .clickable(onClick = onOpenStereo),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = stringResource(R.string.tool_stereo_title),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = stringResource(R.string.tool_stereo_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)

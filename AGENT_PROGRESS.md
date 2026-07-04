@@ -17,6 +17,7 @@
 | Phase 1+2 | Capture metadata, stability gates, rich calibration report |
 | Sub-1 px (#5) | Corner refine, min 18 corners, session isolation, debug overlays, `flags_zero` only |
 | ARCore Explorer (#3) | Diagnostic tool on home screen — not a calibration path |
+| Multi-Camera Stereo Probe | Dual physical streaming, board-pair stereo calib, SGBM disparity export |
 
 Pipeline verified on device: stored-corner calibration matches expected behavior; no further offline audit tooling in repo.
 
@@ -32,7 +33,7 @@ Pipeline verified on device: stored-corner calibration matches expected behavior
 ## Build / lint
 
 - `assembleDebug` and `lintDebug` pass on `main`.
-- Unit tests: `ArCoreDepthColorizerTest`, `ArCoreOverlayOrientationTest`, `CharucoIntrinsicsAlignerTest`.
+- Unit tests: `ArCoreDepthColorizerTest`, `ArCoreOverlayOrientationTest`, `CharucoIntrinsicsAlignerTest`, `stereo/*` (metadata, timestamp delta, probe report, resolution selector).
 
 ## Output paths
 
@@ -45,6 +46,23 @@ Base: `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
 | Debug ID overlays | `debug_overlays/debug_<session>_frame<N>_ids.jpg` |
 | Camera report | `camera_report.json` |
 | ARCore snapshots | `arcore_snapshots/` |
+| Stereo pairs | `stereo_pairs/stereo_pair_<epoch>/` (`left.jpg`, `right.jpg`, `metadata.json`) |
+| Stereo probe report | `stereo_probe_report.json` |
+| Stereo calibration pairs | `stereo_calibration_pairs/pair_<n>/` |
+| Stereo calibration | `stereo_calibration.json` |
+| Disparity debug | `disparity_<epoch>.png` + `disparity_<epoch>.json` |
+
+## S23 Ultra device checklist (Multi-Camera Stereo Probe)
+
+1. Pull branch, `installDebug`, open **Multi-Camera Stereo Probe** from home.
+2. Tap **Run pair probe** — expect wide+ultrawide or wide+tele PASS if HAL allows dual stream.
+3. **Start streams** on first working pair; confirm live `timestamp_delta_ns` (target &lt; 3 ms on device).
+4. **Save stereo pair** — verify `stereo_pairs/stereo_pair_<epoch>/metadata.json` fields.
+5. Optional: toggle **Show camera previews** (off by default); confirm streams still save.
+6. Save **10+ board pairs** with printed ChArUco board visible in both eyes.
+7. **Calibrate stereo** — verify `stereo_calibration.json` (K1/K2, R, T, baseline, RMS).
+8. **Compute disparity** on latest saved pair — verify PNG colormap + JSON sidecar.
+9. Confirm ChArUco Calibrator and ARCore Explorer unchanged.
 
 ## Known limitations
 

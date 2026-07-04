@@ -10,4 +10,20 @@
     <string name="arcore_intrinsics_warning">Diagnostics only. ARCore session stream is separate from ChArUco Camera2 camera_id 0 at 4000×3000. Not a calibration replacement.</string>
     <string name="arcore_experimental_overlay_title">Experimental depth overlay</string>
     <string name="arcore_experimental_overlay_hint">Approximate alignment; portrait preview rotates landscape depth 90°. Not pixel-perfect.</string>
+    <string name="tool_stereo_title">Multi-Camera Stereo Probe</string>
+    <string name="tool_stereo_subtitle">Dual physical camera streaming, calibration, and disparity</string>
+    <string name="stereo_probe_title">Multi-Camera Stereo Probe</string>
+    <string name="stereo_start_streams">Start streams</string>
+    <string name="stereo_stop_streams">Stop streams</string>
+    <string name="stereo_save_pair">Save stereo pair</string>
+    <string name="stereo_export_probe_report">Export probe report</string>
+    <string name="stereo_show_previews">Show camera previews</string>
+    <string name="stereo_save_board_pair">Save board pair</string>
+    <string name="stereo_calibrate">Calibrate stereo</string>
+    <string name="stereo_compute_disparity">Compute disparity</string>
+    <string name="stereo_clear_calibration">Clear calibration session</string>
+    <string name="stereo_run_probe">Run pair probe</string>
+    <string name="stereo_depth_disclaimer">Phone baseline is small; depth is most reliable at 0.3–1.5 m and degrades beyond ~2 m.</string>
+    <string name="stereo_grant_camera_permission">Grant camera permission</string>
+    <string name="stereo_opencv_unavailable">OpenCV is not initialized</string>
 </resources>

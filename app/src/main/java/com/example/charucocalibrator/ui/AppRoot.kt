@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.example.charucocalibrator.ui.navigation.AppDestination
 import com.example.charucocalibrator.ui.tools.arcore.ArCoreExplorerScreen
+import com.example.charucocalibrator.ui.tools.stereo.StereoProbeScreen
 
 @Composable
 fun AppRoot(modifier: Modifier = Modifier) {
@@ -19,6 +20,7 @@ fun AppRoot(modifier: Modifier = Modifier) {
                 modifier = modifier,
                 onOpenCharuco = { destination = AppDestination.CharucoCalibrator },
                 onOpenArCore = { destination = AppDestination.ArCoreExplorer },
+                onOpenStereo = { destination = AppDestination.StereoProbe },
             )
         }
         AppDestination.CharucoCalibrator -> {
@@ -29,6 +31,12 @@ fun AppRoot(modifier: Modifier = Modifier) {
         }
         AppDestination.ArCoreExplorer -> {
             ArCoreExplorerScreen(
+                modifier = modifier,
+                onBack = { destination = AppDestination.Home },
+            )
+        }
+        AppDestination.StereoProbe -> {
+            StereoProbeScreen(
                 modifier = modifier,
                 onBack = { destination = AppDestination.Home },
             )
