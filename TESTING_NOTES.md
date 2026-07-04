@@ -9,7 +9,7 @@ All Android outputs use the app-specific external files directory, normally:
 - Camera report: `camera_report.json`
 - Test frames: `test_frame_<epoch_millis>.jpg` and `.json`
 - Accepted frames: `accepted_frames/accepted_<epoch_millis>.jpg` and `.json`
-- Camera report: `camera_report.json`
+- Debug ID overlays: `debug_overlays/debug_<session>_frame<N>_ids.jpg`
 - Calibration JSON: `charuco_calibration_result.json`
 
 No broad storage permission is required.
@@ -53,7 +53,7 @@ No broad storage permission is required.
 1. Print the 7x10 ChArUco board (`DICT_5X5_100`, 25 mm squares, 18 mm markers).
 2. Launch the app and point camera `0` at the board under good lighting.
 3. Confirm `markers` and `charuco corners` increase when the board is visible.
-4. Confirm `detection` becomes `detected` with at least 8 ChArUco corners.
+4. Confirm `detection` becomes `detected` with at least 18 ChArUco corners (post #5 minimum).
 5. When the board is absent, confirm a rejection reason appears.
 6. Confirm sharpness, test-frame save, and diagnostics export still work.
 
@@ -68,7 +68,20 @@ No broad storage permission is required.
 7. Verify metadata includes bbox fields, sharpness, counts, `orientation_note`, and
    capture metadata: `sensor_exposure_time_ns`, `iso_sensitivity`, `focal_length_mm`,
    `lens_focus_distance`, `af_state`, `ae_state`, `awb_state`, and state name fields.
-8. Tap **Stop auto capture**, then **Clear accepted frames**, and confirm the counter resets.
+8. Tap **Stop auto capture**, then **Clear session**, and confirm the counter resets.
+
+## Sub-1 px session protocol (post #5)
+
+1. Tap **New session** before capture (note session ID in UI).
+2. **Start auto capture**; collect varied poses with ≥18 corners per frame (41–54 typical).
+3. Confirm live stats show `ChArUco corners: N (min 18)` and `session: session_<epoch>`.
+4. Tap **Export ID overlays** — verify 3 JPEGs under `debug_overlays/`.
+5. Tap **Calibrate session** (requires ≥10 accepted frames in current session).
+6. Record RMS, median, p90, and `solver_variant` (`flags_zero`).
+7. Pull device files and audit with Python (see below). Use `--session-id` from calibration JSON.
+
+Legacy frames without `capture_session_id` may remain on disk — always scope audits to the
+calibration session, not the full `accepted_frames/` folder.
 
 ## Phase 1 + 2: capture stability, quality gates, and rich calibration report
 
@@ -97,16 +110,15 @@ No broad storage permission is required.
 
 ### Rich calibration JSON and UI
 
-1. Collect at least 10 accepted frames with varied board poses.
-2. Tap **Calibrate**.
+1. Collect at least 10 accepted frames with varied board poses in one session.
+2. Tap **Calibrate session**.
 3. Confirm the UI shows RMS, median per-view, p90 per-view, solver variant, and
    used/dropped view counts.
 4. Open `charuco_calibration_result.json` and verify:
-   `per_view_errors_px`, `median_per_view_error_px`, `p90_per_view_error_px`,
-   `solver_variant`, `solver_flags`, `used_frames`, `dropped_frames`,
-   `outlier_threshold_px`, and `capture_summary` (median ISO, median exposure, focus range).
-5. Compare solver variants: with fewer than 25 used views only `fix_k3` and `flags_zero`
-   are compared; with 25+ views `rational_model` is also tried.
+   `capture_session_id`, `per_view_errors_px`, `median_per_view_error_px`,
+   `p90_per_view_error_px`, `solver_variant`, `solver_flags`, `used_frames`,
+   `dropped_frames`, `outlier_threshold_px`, and `capture_summary`.
+5. Solver is `flags_zero` only (no rational/fix_k3 A/B on current `main`).
 
 ### Printed-board validation protocol
 
@@ -132,26 +144,32 @@ Success metrics to record per run:
 
 ## Offline Python calibration audit
 
-Requirements: Python 3, `opencv-contrib-python` (or full OpenCV build with `cv2.aruco`).
+Requirements: Python 3, `opencv-contrib-python`.
 
 ```bash
 pip install opencv-contrib-python
-python scripts/calibrate_charuco_from_android_frames.py \
-  --input-dir /path/to/accepted_frames \
-  --output-json /path/to/charuco_calibration_result.json \
-  --image-width 4000 \
-  --image-height 3000
+
+# Pull from device (note: adb may nest accepted_frames/ twice)
+adb pull /storage/emulated/0/Android/data/com.example.charucocalibrator/files/accepted_frames/ ./audit_pull/accepted_frames/
+adb pull /storage/emulated/0/Android/data/com.example.charucocalibrator/files/debug_overlays/ ./audit_pull/debug_overlays/
+adb pull /storage/emulated/0/Android/data/com.example.charucocalibrator/files/charuco_calibration_result.json ./audit_pull/
+
+# Session-scoped stored-corner audit (authoritative parity check)
+python scripts/audit_charuco_from_stored_json.py \
+  --input-dir ./audit_pull/accepted_frames \
+  --session-id session_<epoch_from_calibration_json> \
+  --mode stored --flags 0 --frame-filter all \
+  --output-json ./audit_pull/audit_stored_session.json
 ```
 
-- Reads `accepted_*.jpg` images from the Android `accepted_frames/` directory.
-- Uses adjacent `accepted_*.json` metadata when present for dimensions.
-- Exports the same JSON schema as the Android app.
-- Useful for auditing or recovering calibration if on-device export needs verification.
+- Use `--mode stored` with corners from accepted JSON (matches Android).
+- Do **not** use `--mode redetect` for parity checks (JPEG round-trip adds error).
+- See `CALIBRATION_AUDIT.md` for expected results and interpretation.
 
 ## Milestone G: on-device calibration on the S23 Ultra
 
-1. Collect at least 10–20 accepted frames with varied board poses.
-2. Tap **Run calibration**.
+1. Collect at least 10–20 accepted frames with varied board poses in one session.
+2. Tap **Calibrate session**.
 3. Confirm calibration status shows success, RMS, median/p90 per-view errors, and solver variant.
 4. Confirm `fx/fy/cx/cy` values appear in the UI.
 5. Open `charuco_calibration_result.json` in the app files directory.
@@ -222,24 +240,3 @@ Optional on Arch Linux host: `sudo pacman -S android-tools` then `adb pull ...`.
 | Depth | valid % > 0 in good conditions |
 | Export | JSON + bin + PNGs with matching sizes |
 | No false claims | Do not use ARCore fx for ChArUco 4000×3000 calibration |
-
-## ARCore Explorer v1 (physical S23 Ultra)
-
-Prerequisites: Google Play Services for AR installed; camera permission granted.
-
-1. From **Tools** home screen, open **ARCore Explorer**.
-2. Confirm ARCore install prompt works if ARCore is missing; return after install.
-3. Confirm GLES2 camera preview renders (portrait).
-4. Confirm tracking banner shows `TRACKING` / `PAUSED` / `NOT_TRACKING` and failure reason when applicable.
-5. Confirm intrinsics warning references Camera2 `camera_id 0` at `4000x3000`.
-6. Confirm image and texture intrinsics panels update live.
-7. Toggle overlay modes: Off / Depth / Confidence / Masked.
-8. Toggle depth source Raw vs Smoothed — preview should not restart (read-path only).
-9. Confirm native depth resolution label and approximate-alignment disclaimer.
-10. Tap **Export snapshot**; confirm files under `.../files/arcore_snapshots/`:
-    - `arcore_snapshot_<epoch>.json`
-    - `arcore_raw_depth_<epoch>.bin` + `.png`
-    - `arcore_confidence_<epoch>.png`
-    - `arcore_smoothed_depth_<epoch>.bin` + `.png` when smoothed depth is available
-11. If `charuco_calibration_result.json` exists, confirm ChArUco diff panel shows Δfx/Δfy/Δcx/Δcy and dimension mismatch warning when sizes differ.
-12. Confirm ChArUco Calibrator still works unchanged (`camera_id 0`, `4000x3000`).

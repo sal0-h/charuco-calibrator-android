@@ -74,6 +74,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--debug-dir", type=Path, default=None)
     parser.add_argument("--debug-count", type=int, default=3)
     parser.add_argument("--camera-id", default="0")
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Only frames whose metadata capture_session_id matches (post session-isolation builds).",
+    )
     return parser.parse_args()
 
 
@@ -122,7 +127,17 @@ def cluster_frames(image_paths: list[Path], gap_minutes: float = 10.0) -> list[l
     return clusters
 
 
-def filter_image_paths(image_paths: list[Path], frame_filter: str) -> list[Path]:
+def filter_image_paths(
+    image_paths: list[Path],
+    frame_filter: str,
+    session_id: str | None = None,
+) -> list[Path]:
+    if session_id:
+        image_paths = [
+            path
+            for path in image_paths
+            if load_metadata(path).get("capture_session_id") == session_id
+        ]
     if frame_filter == "all":
         return sorted(image_paths, key=epoch_ms_from_name)
     if frame_filter == "cluster2":
@@ -461,6 +476,10 @@ def main() -> int:
     image_paths = sorted(input_dir.glob("accepted_*.jpg"))
     if not image_paths:
         raise SystemExit(f"No accepted_*.jpg in {input_dir}")
+    if args.session_id:
+        image_paths = filter_image_paths(image_paths, "all", args.session_id)
+        if not image_paths:
+            raise SystemExit(f"No frames with capture_session_id={args.session_id!r} in {input_dir}")
 
     board = create_board()
 
@@ -475,7 +494,7 @@ def main() -> int:
         return 0
 
     flags, flags_label = parse_flags(args.flags)
-    selected_paths = filter_image_paths(image_paths, args.frame_filter)
+    selected_paths = filter_image_paths(image_paths, args.frame_filter, args.session_id)
     builder = build_stored_correspondence if args.mode == "stored" else build_redetect_correspondence
     correspondences = [c for path in selected_paths if (c := builder(path, board)) is not None]
     if len(correspondences) < 3:
