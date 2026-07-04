@@ -441,7 +441,7 @@ private fun DepthStatsPanel(frameState: ArCoreFrameState) {
     ) {
         Text(text = "Depth stats", style = MaterialTheme.typography.titleSmall)
         Text(
-            text = "Depth values are ARCore estimates in meters; not verified against ChArUco calibration.",
+            text = "Heatmap uses 2–98% depth percentile scaling per frame (not metric-absolute).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),

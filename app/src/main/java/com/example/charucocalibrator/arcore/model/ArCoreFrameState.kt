@@ -1,5 +1,7 @@
 package com.example.charucocalibrator.arcore.model
 
+import android.view.Surface
+
 data class CameraIntrinsicsSnapshot(
     val fx: Float = 0f,
     val fy: Float = 0f,
@@ -87,6 +89,9 @@ data class ArCoreFrameState(
     val confidence: ConfidenceImageData? = null,
     val depthModeLabel: String = "DISABLED",
     val sessionRunning: Boolean = false,
+    val displayRotation: Int = Surface.ROTATION_0,
+    val viewportWidth: Int = 0,
+    val viewportHeight: Int = 0,
 ) {
     fun deepCopyForExport(): ArCoreFrameState = copy(
         rawDepth = rawDepth?.copy(depthMm = rawDepth.depthMm.copyOf()),

@@ -122,6 +122,9 @@ class ArCoreSessionController(
             confidence = ArCoreDepthReader.readConfidence(frame),
             depthModeLabel = depthModeLabel,
             sessionRunning = true,
+            displayRotation = displayRotation,
+            viewportWidth = viewportWidth,
+            viewportHeight = viewportHeight,
         )
     }
 

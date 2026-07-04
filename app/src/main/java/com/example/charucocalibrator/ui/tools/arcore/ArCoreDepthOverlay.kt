@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.example.charucocalibrator.arcore.ArCoreDepthColorizer
+import com.example.charucocalibrator.arcore.ArCoreOverlayOrientation
 import com.example.charucocalibrator.arcore.model.ArCoreFrameState
 import com.example.charucocalibrator.arcore.model.DepthImageData
 import com.example.charucocalibrator.arcore.model.DepthOverlayMode
@@ -34,13 +35,25 @@ fun ArCoreDepthOverlay(
         frameState.confidence,
         overlayMode,
         depthSource,
+        frameState.displayRotation,
+        frameState.viewportWidth,
+        frameState.viewportHeight,
     ) {
         buildOverlayBitmap(frameState, overlayMode, depthSource)
     } ?: return
 
-    val imageBitmap = remember(overlayBitmap) { overlayBitmap.asImageBitmap() }
-    val depthWidth = overlayBitmap.width
-    val depthHeight = overlayBitmap.height
+    val orientedBitmap = remember(overlayBitmap, frameState.displayRotation, frameState.viewportWidth, frameState.viewportHeight) {
+        ArCoreOverlayOrientation.alignBitmapToPreview(
+            source = overlayBitmap,
+            displayRotation = frameState.displayRotation,
+            viewportWidth = frameState.viewportWidth,
+            viewportHeight = frameState.viewportHeight,
+        )
+    }
+
+    val imageBitmap = remember(orientedBitmap) { orientedBitmap.asImageBitmap() }
+    val depthWidth = orientedBitmap.width
+    val depthHeight = orientedBitmap.height
 
     Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -92,33 +105,22 @@ private fun buildOverlayBitmap(
             if (depth.width != confidence.width || depth.height != confidence.height) {
                 return depthToHeatmap(depth)
             }
-            val maxDepthMm = depthMaxScaleMm(depth)
             ArCoreDepthColorizer.maskedDepthHeatmapBitmap(
                 depthMm = depth.depthMm,
                 confidence = confidence.confidence,
                 width = depth.width,
                 height = depth.height,
-                maxDepthMm = maxDepthMm,
             )
         }
     }
 }
 
-private fun depthToHeatmap(depth: DepthImageData): android.graphics.Bitmap {
-    val maxDepthMm = depthMaxScaleMm(depth)
-    return ArCoreDepthColorizer.depthToHeatmapBitmap(
+private fun depthToHeatmap(depth: DepthImageData): android.graphics.Bitmap =
+    ArCoreDepthColorizer.depthToHeatmapBitmap(
         depthMm = depth.depthMm,
         width = depth.width,
         height = depth.height,
-        maxDepthMm = maxDepthMm,
     )
-}
-
-private fun depthMaxScaleMm(depth: DepthImageData): Int = when {
-    depth.stats.maxDepthM > 0f -> ((depth.stats.maxDepthM * 1000f).toInt() + 500).coerceAtLeast(1000)
-    depth.stats.medianDepthM > 0f -> ((depth.stats.medianDepthM * 1000f).toInt() + 500).coerceAtLeast(1000)
-    else -> ArCoreDepthColorizer.DEFAULT_EXPORT_MAX_DEPTH_MM
-}
 
 private fun selectDepth(frameState: ArCoreFrameState, depthSource: DepthSourceToggle): DepthImageData? =
     when (depthSource) {

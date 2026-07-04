@@ -264,18 +264,10 @@ object ArCoreSnapshotExporter {
         file: File,
         depth: com.example.charucocalibrator.arcore.model.DepthImageData,
     ): String {
-        val maxDepthMm = when {
-            depth.stats.maxDepthM > 0f ->
-                ((depth.stats.maxDepthM * 1000f).toInt() + 500).coerceAtLeast(1000)
-            depth.stats.medianDepthM > 0f ->
-                ((depth.stats.medianDepthM * 1000f).toInt() + 500).coerceAtLeast(1000)
-            else -> ArCoreDepthColorizer.DEFAULT_EXPORT_MAX_DEPTH_MM
-        }
         val bitmap = ArCoreDepthColorizer.depthToHeatmapBitmap(
             depthMm = depth.depthMm,
             width = depth.width,
             height = depth.height,
-            maxDepthMm = maxDepthMm,
             invalidPixelColor = ArCoreDepthColorizer.EXPORT_INVALID_DEPTH_COLOR,
         )
         writeBitmapPng(file, bitmap)
