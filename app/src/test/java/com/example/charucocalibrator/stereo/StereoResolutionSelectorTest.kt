@@ -22,7 +22,7 @@ class StereoResolutionSelectorTest {
     }
 
     @Test
-    fun candidatesIncludeFallbackAfterMatchedMax() {
+    fun candidatesPrioritizeBoundedFallbackOverFullResolution() {
         val left = listOf(
             Dimensions(4000, 3000),
             Dimensions(1920, 1440),
@@ -38,5 +38,33 @@ class StereoResolutionSelectorTest {
         assertTrue(candidates.isNotEmpty())
         assertEquals(Dimensions(1920, 1440), candidates.first())
         assertTrue(candidates.contains(StereoResolutionSelector.FALLBACK_SIZE))
+    }
+
+    @Test
+    fun candidatesRequireExactSharedDimensionsNotOnlyMatchingArea() {
+        val left = listOf(Dimensions(1600, 1200))
+        val right = listOf(Dimensions(1200, 1600))
+
+        assertTrue(StereoResolutionSelector.resolutionCandidates(left, right).isEmpty())
+    }
+
+    @Test
+    fun candidatesPreferLowerProbeSizesBeforeLargeSharedOutput() {
+        val sizes = listOf(
+            Dimensions(4000, 3000),
+            Dimensions(1920, 1440),
+            Dimensions(1280, 960),
+            Dimensions(640, 480)
+        )
+
+        assertEquals(
+            listOf(
+                Dimensions(1920, 1440),
+                Dimensions(1280, 960),
+                Dimensions(640, 480),
+                Dimensions(4000, 3000)
+            ),
+            StereoResolutionSelector.resolutionCandidates(sizes, sizes)
+        )
     }
 }

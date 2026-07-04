@@ -1,5 +1,13 @@
 # Agent progress
 
+## Stereo probe polish — iteration 1 (stream/probe lifecycle)
+
+- Probe attempts now use one controller, wait for actual `STREAMING`, close camera resources before the next attempt, expose pair/resolution progress, and support cancellation.
+- Left/right frames are paired by nearest sensor timestamp before probe evaluation or export; stale previous-frame deltas are no longer mixed into probe medians.
+- Manual pair selection no longer requires a probe PASS. Safe shared resolutions are tried in the order `1920x1440`, `1280x960`, `640x480` before larger outputs.
+- Duplicate wide cameras are each prioritized with ultrawide/tele candidates, and pair labels include physical IDs.
+- Cloud verification: `testDebugUnitTest` passes. Physical S23 Ultra retest pending: run probe, then manually start IDs `2+5` and `2+6` if no PASS appears.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.

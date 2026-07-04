@@ -84,28 +84,23 @@ object StereoPhysicalCameraEnumerator {
     }
 
     fun pairLabel(left: StereoPhysicalCameraInfo, right: StereoPhysicalCameraInfo): String {
-        val leftType = left.lensType
-        val rightType = right.lensType
-        if (leftType != LensType.UNKNOWN && rightType != LensType.UNKNOWN) {
-            val types = listOf(leftType, rightType).sortedBy { it.ordinal }
-            return "${types[0].label}_${types[1].label}"
-        }
-        return "physical_${left.physicalCameraId}_${right.physicalCameraId}"
+        return "${left.lensType.label}_${left.physicalCameraId}+" +
+            "${right.lensType.label}_${right.physicalCameraId}"
     }
 
     fun prioritizedPairs(cameras: List<StereoPhysicalCameraInfo>): List<Pair<StereoPhysicalCameraInfo, StereoPhysicalCameraInfo>> {
         if (cameras.size < 2) return emptyList()
 
-        val wide = cameras.firstOrNull { it.lensType == LensType.WIDE }
+        val wides = cameras.filter { it.lensType == LensType.WIDE }
         val ultrawide = cameras.firstOrNull { it.lensType == LensType.ULTRAWIDE }
-        val tele = cameras.firstOrNull { it.lensType == LensType.TELE }
+        val teles = cameras.filter { it.lensType == LensType.TELE }
 
         val ordered = linkedSetOf<Pair<StereoPhysicalCameraInfo, StereoPhysicalCameraInfo>>()
-        if (wide != null && ultrawide != null) {
-            ordered.add(orderPair(wide, ultrawide))
+        if (ultrawide != null) {
+            wides.forEach { wide -> ordered.add(orderPair(wide, ultrawide)) }
         }
-        if (wide != null && tele != null) {
-            ordered.add(orderPair(wide, tele))
+        wides.forEach { wide ->
+            teles.forEach { tele -> ordered.add(orderPair(wide, tele)) }
         }
 
         for (leftIndex in cameras.indices) {
@@ -126,7 +121,7 @@ object StereoPhysicalCameraEnumerator {
             second to first
         }
 
-    private fun classifyLensTypes(
+    internal fun classifyLensTypes(
         cameras: List<StereoPhysicalCameraInfo>
     ): List<StereoPhysicalCameraInfo> {
         if (cameras.isEmpty()) return emptyList()
@@ -153,9 +148,9 @@ object StereoPhysicalCameraEnumerator {
         logicalCharacteristics: CameraCharacteristics,
         physicalId: String
     ): CameraCharacteristics =
-        if (physicalId in cameraManager.cameraIdList) {
+        try {
             cameraManager.getCameraCharacteristics(physicalId)
-        } else {
+        } catch (_: Exception) {
             logicalCharacteristics
         }
 

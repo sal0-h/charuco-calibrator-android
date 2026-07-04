@@ -3,9 +3,7 @@ package com.example.charucocalibrator.stereo
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
-import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureFailure
@@ -16,7 +14,6 @@ import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -28,13 +25,11 @@ import com.example.charucocalibrator.CaptureMetadataStore
 import com.example.charucocalibrator.DEFAULT_CAMERA_ID
 import com.example.charucocalibrator.Dimensions
 import com.example.charucocalibrator.FrameMetadata
-import com.example.charucocalibrator.stereo.model.StereoPairProbeResult
-import org.json.JSONObject
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.abs
 
 enum class StereoStreamState {
     IDLE,
@@ -99,6 +94,7 @@ class StereoDualStreamController(
 
     private val streamActive = AtomicBoolean(false)
     private val released = AtomicBoolean(false)
+    private val operationId = AtomicLong(0L)
 
     @Volatile
     private var shouldRun = false
@@ -146,6 +142,10 @@ class StereoDualStreamController(
 
     private val latestLeftFrame = AtomicReference<StereoFrameSnapshot?>(null)
     private val latestRightFrame = AtomicReference<StereoFrameSnapshot?>(null)
+    private val latestMatchedPair = AtomicReference<Pair<StereoFrameSnapshot, StereoFrameSnapshot>?>(null)
+    private val timestampPairer = StereoTimestampPairer<StereoFrameSnapshot>(
+        timestampNs = { it.sensorTimestampNs }
+    )
 
     private var leftFrameCount = 0L
     private var rightFrameCount = 0L
@@ -167,6 +167,7 @@ class StereoDualStreamController(
         reason: String? = null
     ) {
         if (released.get()) return
+        val requestedOperationId = operationId.incrementAndGet()
         shouldRun = true
         leftPhysicalId = leftId
         rightPhysicalId = rightId
@@ -182,8 +183,14 @@ class StereoDualStreamController(
         timestampDeltas.clear()
         leftFrameCount = 0
         rightFrameCount = 0
+        leftFpsWindowStartMs = 0L
+        rightFpsWindowStartMs = 0L
+        leftFpsCount = 0
+        rightFpsCount = 0
         latestLeftFrame.set(null)
         latestRightFrame.set(null)
+        latestMatchedPair.set(null)
+        timestampPairer.clear()
         leftMetadataStore.clear()
         rightMetadataStore.clear()
         updateState(
@@ -193,32 +200,57 @@ class StereoDualStreamController(
                 rightPhysicalId = rightId,
                 pairLabel = label,
                 resolution = resolution,
+                leftFps = 0f,
+                rightFps = 0f,
+                timestampDeltaNs = null,
+                leftMetadata = null,
+                rightMetadata = null,
                 fallbackReason = reason,
                 halError = null,
-                warningMessage = null
+                leftFrameCount = 0,
+                rightFrameCount = 0,
+                warningMessage = null,
+                afPolicy = "continuous_then_fixed"
             )
         )
-        cameraHandler.post { openCamera() }
+        cameraHandler.post {
+            closeCameraResources()
+            if (isCurrent(requestedOperationId)) {
+                openCamera(requestedOperationId)
+            }
+        }
+        cameraHandler.postDelayed({
+            if (isCurrent(requestedOperationId) &&
+                currentState.streamState == StereoStreamState.OPENING
+            ) {
+                fail(requestedOperationId, "Camera/session opening timed out")
+            }
+        }, OPEN_TIMEOUT_MS)
     }
 
-    fun stop() {
+    fun stop(onStopped: (() -> Unit)? = null) {
+        val stoppedOperationId = operationId.incrementAndGet()
         shouldRun = false
         streamActive.set(false)
         cameraHandler.post {
             closeCameraResources()
-            updateState(
-                currentState.copy(
-                    streamState = StereoStreamState.IDLE,
-                    leftFps = 0f,
-                    rightFps = 0f,
-                    timestampDeltaNs = null
+            if (!released.get() && operationId.get() == stoppedOperationId) {
+                updateState(
+                    currentState.copy(
+                        streamState = StereoStreamState.IDLE,
+                        leftFps = 0f,
+                        rightFps = 0f,
+                        timestampDeltaNs = null
+                    )
                 )
-            )
+            }
+            onStopped?.let(::postToMain)
         }
     }
 
     fun release() {
         if (!released.compareAndSet(false, true)) return
+        operationId.incrementAndGet()
         shouldRun = false
         streamActive.set(false)
         cameraHandler.post {
@@ -230,7 +262,8 @@ class StereoDualStreamController(
     }
 
     fun getLatestFrames(): Pair<StereoFrameSnapshot?, StereoFrameSnapshot?> =
-        latestLeftFrame.get() to latestRightFrame.get()
+        latestMatchedPair.get()?.let { it.first to it.second }
+            ?: (null to null)
 
     fun probePair(
         leftId: String,
@@ -252,21 +285,7 @@ class StereoDualStreamController(
             return
         }
 
-        val probeDeltas = mutableListOf<Long>()
-        var probeLeftCount = 0L
-        var probeRightCount = 0L
-        var probeHalError: String? = null
-
-        val probeController = StereoDualStreamController(applicationContext) { state ->
-            if (state.streamState == StereoStreamState.FAILED) {
-                probeHalError = state.halError
-            }
-            state.timestampDeltaNs?.let(probeDeltas::add)
-            probeLeftCount = state.leftFrameCount
-            probeRightCount = state.rightFrameCount
-        }
-
-        probeController.start(
+        start(
             leftId = leftId,
             rightId = rightId,
             resolution = resolution,
@@ -274,36 +293,52 @@ class StereoDualStreamController(
             enablePreviews = false
         )
 
-        mainHandler.postDelayed({
-            val median = StereoTimestampUtils.medianDeltaNs(probeDeltas)
-            val success = probeHalError == null &&
-                probeLeftCount > 0 &&
-                probeRightCount > 0 &&
-                median != null &&
-                StereoTimestampUtils.isWithinProbeTolerance(median)
-            probeController.stop()
-            probeController.release()
-            onComplete(
-                StereoProbeSessionResult(
-                    success = success,
-                    medianTimestampDeltaNs = median,
-                    halError = probeHalError,
-                    leftFrameCount = probeLeftCount,
-                    rightFrameCount = probeRightCount
+        val probeStartedAtMs = System.currentTimeMillis()
+        var streamingAtMs: Long? = null
+        val completed = AtomicBoolean(false)
+        lateinit var poll: Runnable
+        poll = Runnable {
+            if (released.get() || completed.get()) return@Runnable
+            val state = currentState
+            val now = System.currentTimeMillis()
+            if (state.streamState == StereoStreamState.STREAMING && streamingAtMs == null) {
+                streamingAtMs = now
+            }
+            val collectionComplete = streamingAtMs?.let { now - it >= durationMs } == true
+            val openingTimedOut = now - probeStartedAtMs >= PROBE_TOTAL_TIMEOUT_MS
+            val result = StereoProbeEvaluator.terminalResult(
+                StereoProbeSnapshot(
+                    streamState = state.streamState,
+                    leftFrameCount = leftFrameCount,
+                    rightFrameCount = rightFrameCount,
+                    timestampDeltasNs = timestampDeltas.toList(),
+                    halError = state.halError,
+                    collectionComplete = collectionComplete,
+                    timedOut = openingTimedOut
                 )
             )
-        }, durationMs)
+            if (result != null) {
+                if (!completed.compareAndSet(false, true)) return@Runnable
+                stop {
+                    onComplete(result)
+                    release()
+                }
+            } else {
+                mainHandler.postDelayed(poll, PROBE_POLL_INTERVAL_MS)
+            }
+        }
+        mainHandler.post(poll)
     }
 
     @SuppressLint("MissingPermission")
-    private fun openCamera() {
-        if (!shouldRun || released.get()) return
+    private fun openCamera(requestedOperationId: Long) {
+        if (!isCurrent(requestedOperationId)) return
         val manager = cameraManager ?: run {
-            fail("CameraManager unavailable")
+            fail(requestedOperationId, "CameraManager unavailable")
             return
         }
         if (logicalCameraId !in manager.cameraIdList) {
-            fail("Logical camera $logicalCameraId is not exposed by Camera2")
+            fail(requestedOperationId, "Logical camera $logicalCameraId is not exposed by Camera2")
             return
         }
 
@@ -312,37 +347,37 @@ class StereoDualStreamController(
                 logicalCameraId,
                 object : CameraDevice.StateCallback() {
                     override fun onOpened(camera: CameraDevice) {
-                        if (!shouldRun || released.get()) {
+                        if (!isCurrent(requestedOperationId)) {
                             camera.close()
                             return
                         }
                         cameraDevice = camera
-                        configureSession(camera)
+                        configureSession(camera, requestedOperationId)
                     }
 
                     override fun onDisconnected(camera: CameraDevice) {
                         camera.close()
                         cameraDevice = null
-                        fail("Camera disconnected")
+                        fail(requestedOperationId, "Camera disconnected")
                     }
 
                     override fun onError(camera: CameraDevice, error: Int) {
                         camera.close()
                         cameraDevice = null
-                        fail("Camera open error: $error")
+                        fail(requestedOperationId, "Camera open error: $error")
                     }
                 },
                 cameraHandler
             )
         } catch (exception: Exception) {
-            fail("Camera open failed: ${exception.message}")
+            fail(requestedOperationId, "Camera open failed: ${exception.message}")
         }
     }
 
-    private fun configureSession(camera: CameraDevice) {
-        val leftId = leftPhysicalId ?: return fail("Missing left physical camera id")
-        val rightId = rightPhysicalId ?: return fail("Missing right physical camera id")
-        val resolution = selectedResolution ?: return fail("Missing resolution")
+    private fun configureSession(camera: CameraDevice, requestedOperationId: Long) {
+        val leftId = leftPhysicalId ?: return fail(requestedOperationId, "Missing left physical camera id")
+        val rightId = rightPhysicalId ?: return fail(requestedOperationId, "Missing right physical camera id")
+        val resolution = selectedResolution ?: return fail(requestedOperationId, "Missing resolution")
 
         closeReadersAndSurfaces()
 
@@ -353,7 +388,10 @@ class StereoDualStreamController(
             ImageFormat.YUV_420_888,
             MAX_IMAGES
         ).also {
-            it.setOnImageAvailableListener({ reader -> onImageAvailable(reader, isLeft = true) }, imageHandler)
+            it.setOnImageAvailableListener(
+                { reader -> onImageAvailable(reader, isLeft = true, requestedOperationId) },
+                imageHandler
+            )
         }
         val rightReader = ImageReader.newInstance(
             size.width,
@@ -361,7 +399,10 @@ class StereoDualStreamController(
             ImageFormat.YUV_420_888,
             MAX_IMAGES
         ).also {
-            it.setOnImageAvailableListener({ reader -> onImageAvailable(reader, isLeft = false) }, imageHandler)
+            it.setOnImageAvailableListener(
+                { reader -> onImageAvailable(reader, isLeft = false, requestedOperationId) },
+                imageHandler
+            )
         }
         leftImageReader = leftReader
         rightImageReader = rightReader
@@ -397,7 +438,7 @@ class StereoDualStreamController(
             sessionExecutor,
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
-                    if (!shouldRun || released.get()) {
+                    if (!isCurrent(requestedOperationId)) {
                         session.close()
                         return
                     }
@@ -410,7 +451,7 @@ class StereoDualStreamController(
                         )
                         streamActive.set(true)
                         streamStartedAtMs = System.currentTimeMillis()
-                        scheduleFocusLock()
+                        scheduleFocusLock(requestedOperationId)
                         updateState(
                             currentState.copy(
                                 streamState = StereoStreamState.STREAMING,
@@ -418,13 +459,13 @@ class StereoDualStreamController(
                             )
                         )
                     } catch (exception: Exception) {
-                        fail("Repeating request failed: ${exception.message}")
+                        fail(requestedOperationId, "Repeating request failed: ${exception.message}")
                     }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
                     session.close()
-                    fail("Session configuration failed")
+                    fail(requestedOperationId, "Session configuration failed")
                 }
             }
         )
@@ -432,7 +473,7 @@ class StereoDualStreamController(
         try {
             camera.createCaptureSession(sessionConfig)
         } catch (exception: Exception) {
-            fail("Session creation failed: ${exception.message}")
+            fail(requestedOperationId, "Session creation failed: ${exception.message}")
         }
     }
 
@@ -444,6 +485,7 @@ class StereoDualStreamController(
         outputs.forEach { output ->
             output.surface?.let(builder::addTarget)
         }
+        builder.setTag(operationId.get())
         builder.set(
             CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
             CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
@@ -464,31 +506,80 @@ class StereoDualStreamController(
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
         }
+        listOfNotNull(leftPhysicalId, rightPhysicalId).forEach { physicalId ->
+            builder.setPhysicalIfSupported(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF,
+                physicalId
+            )
+            builder.setPhysicalIfSupported(
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF,
+                physicalId
+            )
+            builder.setPhysicalIfSupported(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_ON,
+                physicalId
+            )
+            builder.setPhysicalIfSupported(
+                CaptureRequest.CONTROL_AF_MODE,
+                if (focusLocked) {
+                    CaptureRequest.CONTROL_AF_MODE_OFF
+                } else {
+                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                },
+                physicalId
+            )
+            if (focusLocked) {
+                fixedFocusDistance?.let { distance ->
+                    builder.setPhysicalIfSupported(
+                        CaptureRequest.LENS_FOCUS_DISTANCE,
+                        distance,
+                        physicalId
+                    )
+                }
+            }
+        }
         return builder.build()
     }
 
+    private fun <T> CaptureRequest.Builder.setPhysicalIfSupported(
+        key: CaptureRequest.Key<T>,
+        value: T,
+        physicalCameraId: String
+    ) {
+        try {
+            setPhysicalCameraKey(key, value, physicalCameraId)
+        } catch (exception: IllegalArgumentException) {
+            Log.d(TAG, "Physical request key ${key.name} unavailable for $physicalCameraId")
+        }
+    }
+
     private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+        @Suppress("DEPRECATION")
         override fun onCaptureCompleted(
             session: CameraCaptureSession,
             request: CaptureRequest,
             result: TotalCaptureResult
         ) {
+            if (request.tag != operationId.get()) return
             val timestamp = result[CaptureResult.SENSOR_TIMESTAMP] ?: return
-            val metadata = FrameMetadata.fromCaptureResult(timestamp, result)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                when (result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)) {
-                    leftPhysicalId -> leftMetadataStore.store(metadata)
-                    rightPhysicalId -> rightMetadataStore.store(metadata)
-                    else -> {
-                        leftMetadataStore.store(metadata)
-                        rightMetadataStore.store(metadata)
-                    }
-                }
-            } else {
-                leftMetadataStore.store(metadata)
-                rightMetadataStore.store(metadata)
-            }
-            metadata.lensFocusDistance?.let { distance ->
+            val logicalMetadata = FrameMetadata.fromCaptureResult(timestamp, result)
+            val physicalResults = result.physicalCameraResults
+            storePhysicalMetadata(
+                physicalCameraId = leftPhysicalId,
+                physicalResults = physicalResults,
+                fallback = logicalMetadata,
+                store = leftMetadataStore
+            )
+            storePhysicalMetadata(
+                physicalCameraId = rightPhysicalId,
+                physicalResults = physicalResults,
+                fallback = logicalMetadata,
+                store = rightMetadataStore
+            )
+            logicalMetadata.lensFocusDistance?.let { distance ->
                 if (!focusLocked && System.currentTimeMillis() - streamStartedAtMs < WARMUP_MS) {
                     warmupFocusSamples.add(distance)
                 }
@@ -500,11 +591,34 @@ class StereoDualStreamController(
             request: CaptureRequest,
             failure: CaptureFailure
         ) {
+            if (request.tag != operationId.get()) return
             Log.w(TAG, "Capture failed: ${failure.reason}")
         }
     }
 
-    private fun onImageAvailable(reader: ImageReader, isLeft: Boolean) {
+    private fun storePhysicalMetadata(
+        physicalCameraId: String?,
+        physicalResults: Map<String, CaptureResult>,
+        fallback: FrameMetadata,
+        store: CaptureMetadataStore
+    ) {
+        val physicalResult = physicalCameraId?.let(physicalResults::get)
+        if (physicalResult == null) {
+            store.store(fallback)
+            return
+        }
+        val timestamp = physicalResult[CaptureResult.SENSOR_TIMESTAMP]
+            ?: fallback.sensorTimestampNs
+            ?: return
+        store.store(FrameMetadata.fromCaptureResult(timestamp, physicalResult))
+    }
+
+    private fun onImageAvailable(
+        reader: ImageReader,
+        isLeft: Boolean,
+        requestedOperationId: Long
+    ) {
+        if (!isCurrent(requestedOperationId)) return
         val image = try {
             reader.acquireLatestImage()
         } catch (_: IllegalStateException) {
@@ -514,6 +628,7 @@ class StereoDualStreamController(
         image.use {
             try {
                 val nv21 = StereoYuvUtil.yuv420888ToNv21(it)
+                if (!isCurrent(requestedOperationId)) return@use
                 val timestamp = it.timestamp
                 val metadataStore = if (isLeft) leftMetadataStore else rightMetadataStore
                 val metadata = metadataStore.lookup(timestamp, consume = false)
@@ -534,18 +649,23 @@ class StereoDualStreamController(
                     rightFpsCount++
                 }
 
-                val leftTs = latestLeftFrame.get()?.sensorTimestampNs
-                val rightTs = latestRightFrame.get()?.sensorTimestampNs
-                val delta = if (leftTs != null && rightTs != null) {
-                    val value = StereoTimestampUtils.deltaNs(leftTs, rightTs)
+                val matchedPair = if (isLeft) {
+                    timestampPairer.offerLeft(snapshot)
+                } else {
+                    timestampPairer.offerRight(snapshot)
+                }
+                val delta = matchedPair?.let { (left, right) ->
+                    val value = StereoTimestampUtils.deltaNs(
+                        left.sensorTimestampNs,
+                        right.sensorTimestampNs
+                    )
+                    latestMatchedPair.set(left to right)
                     timestampDeltas.addLast(value)
                     while (timestampDeltas.size > MAX_DELTA_SAMPLES) {
                         timestampDeltas.removeFirst()
                     }
                     value
-                } else {
-                    null
-                }
+                } ?: currentState.timestampDeltaNs
 
                 val now = System.currentTimeMillis()
                 var leftFps = currentState.leftFps
@@ -593,9 +713,9 @@ class StereoDualStreamController(
         }
     }
 
-    private fun scheduleFocusLock() {
+    private fun scheduleFocusLock(requestedOperationId: Long) {
         cameraHandler.postDelayed({
-            if (!shouldRun || released.get() || !streamActive.get()) return@postDelayed
+            if (!isCurrent(requestedOperationId) || !streamActive.get()) return@postDelayed
             fixedFocusDistance = warmupFocusSamples
                 .sorted()
                 .let { samples ->
@@ -689,8 +809,10 @@ class StereoDualStreamController(
         rightPreviewSurface = null
     }
 
-    private fun fail(message: String) {
+    private fun fail(requestedOperationId: Long, message: String) {
+        if (!isCurrent(requestedOperationId)) return
         Log.e(TAG, message)
+        shouldRun = false
         streamActive.set(false)
         updateState(
             currentState.copy(
@@ -698,7 +820,15 @@ class StereoDualStreamController(
                 halError = message
             )
         )
+        cameraHandler.post {
+            if (operationId.get() == requestedOperationId) {
+                closeCameraResources()
+            }
+        }
     }
+
+    private fun isCurrent(requestedOperationId: Long): Boolean =
+        shouldRun && !released.get() && operationId.get() == requestedOperationId
 
     private fun updateState(state: StereoLiveState) {
         currentState = state
@@ -714,8 +844,11 @@ class StereoDualStreamController(
     companion object {
         private const val TAG = "StereoDualStream"
         private const val MAX_IMAGES = 3
+        private const val OPEN_TIMEOUT_MS = 6_000L
         private const val WARMUP_MS = 2_500L
         private const val PROBE_DURATION_MS = 2_000L
+        private const val PROBE_TOTAL_TIMEOUT_MS = OPEN_TIMEOUT_MS + PROBE_DURATION_MS + 1_000L
+        private const val PROBE_POLL_INTERVAL_MS = 100L
         private const val FPS_WINDOW_MS = 1_000L
         private const val MAX_DELTA_SAMPLES = 120
     }

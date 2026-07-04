@@ -6,23 +6,52 @@ import com.example.charucocalibrator.stereo.model.StereoPairProbeResult
 import com.example.charucocalibrator.stereo.model.StereoPhysicalCameraInfo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+
+data class StereoProbeProgress(
+    val pairIndex: Int,
+    val pairCount: Int,
+    val left: StereoPhysicalCameraInfo,
+    val right: StereoPhysicalCameraInfo,
+    val resolutionIndex: Int,
+    val resolutionCount: Int,
+    val resolution: Dimensions
+)
 
 class StereoPairProbe(
     context: Context
 ) {
     private val applicationContext = context.applicationContext
+    private val cancelled = AtomicBoolean(false)
+    private val activeController = AtomicReference<StereoDualStreamController?>(null)
+    private val activeLatch = AtomicReference<CountDownLatch?>(null)
+
+    fun cancel() {
+        cancelled.set(true)
+        activeController.getAndSet(null)?.release()
+        activeLatch.getAndSet(null)?.countDown()
+    }
 
     fun probeAll(
         cameras: List<StereoPhysicalCameraInfo>,
-        onPairStarted: ((StereoPhysicalCameraInfo, StereoPhysicalCameraInfo) -> Unit)? = null,
+        onProgress: ((StereoProbeProgress) -> Unit)? = null,
         onPairFinished: ((StereoPairProbeResult) -> Unit)? = null
     ): List<StereoPairProbeResult> {
+        cancelled.set(false)
         val pairs = StereoPhysicalCameraEnumerator.prioritizedPairs(cameras)
         val results = mutableListOf<StereoPairProbeResult>()
-        for ((left, right) in pairs) {
-            onPairStarted?.invoke(left, right)
-            val result = probePair(left, right)
+        for ((pairOffset, pair) in pairs.withIndex()) {
+            if (cancelled.get()) break
+            val (left, right) = pair
+            val result = probePair(
+                left = left,
+                right = right,
+                pairIndex = pairOffset + 1,
+                pairCount = pairs.size,
+                onProgress = onProgress
+            )
+            if (cancelled.get()) break
             results.add(result)
             onPairFinished?.invoke(result)
         }
@@ -31,10 +60,15 @@ class StereoPairProbe(
 
     fun probePair(
         left: StereoPhysicalCameraInfo,
-        right: StereoPhysicalCameraInfo
+        right: StereoPhysicalCameraInfo,
+        pairIndex: Int = 1,
+        pairCount: Int = 1,
+        onProgress: ((StereoProbeProgress) -> Unit)? = null
     ): StereoPairProbeResult {
         val pairLabel = StereoPhysicalCameraEnumerator.pairLabel(left, right)
-        val candidates = StereoResolutionSelector.resolutionCandidates(left.yuvSizes, right.yuvSizes)
+        val candidates = StereoResolutionSelector
+            .resolutionCandidates(left.yuvSizes, right.yuvSizes)
+            .take(MAX_RESOLUTION_ATTEMPTS)
         if (candidates.isEmpty()) {
             return StereoPairProbeResult(
                 leftPhysicalCameraId = left.physicalCameraId,
@@ -53,6 +87,18 @@ class StereoPairProbe(
         val firstCandidate = candidates.first()
 
         for ((index, resolution) in candidates.withIndex()) {
+            if (cancelled.get()) break
+            onProgress?.invoke(
+                StereoProbeProgress(
+                    pairIndex = pairIndex,
+                    pairCount = pairCount,
+                    left = left,
+                    right = right,
+                    resolutionIndex = index + 1,
+                    resolutionCount = candidates.size,
+                    resolution = resolution
+                )
+            )
             if (index > 0) {
                 fallbackReason = "retried_at_${resolution.width}x${resolution.height}"
             }
@@ -76,6 +122,19 @@ class StereoPairProbe(
             }
         }
 
+        if (cancelled.get()) {
+            return StereoPairProbeResult(
+                leftPhysicalCameraId = left.physicalCameraId,
+                rightPhysicalCameraId = right.physicalCameraId,
+                pairLabel = pairLabel,
+                success = false,
+                resolution = null,
+                fallbackReason = "probe_cancelled",
+                medianTimestampDeltaNs = null,
+                halError = "Probe cancelled"
+            )
+        }
+
         return StereoPairProbeResult(
             leftPhysicalCameraId = left.physicalCameraId,
             rightPhysicalCameraId = right.physicalCameraId,
@@ -94,8 +153,10 @@ class StereoPairProbe(
         resolution: Dimensions
     ): StereoProbeSessionResult {
         val latch = CountDownLatch(1)
+        activeLatch.set(latch)
         val resultRef = AtomicReference<StereoProbeSessionResult?>(null)
         val controller = StereoDualStreamController(applicationContext) { }
+        activeController.set(controller)
         controller.probePair(
             leftId = leftPhysicalCameraId,
             rightId = rightPhysicalCameraId,
@@ -105,16 +166,21 @@ class StereoPairProbe(
             latch.countDown()
         }
         latch.await(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        return resultRef.get() ?: StereoProbeSessionResult(
+        activeLatch.compareAndSet(latch, null)
+        activeController.compareAndSet(controller, null)
+        val result = resultRef.get()
+        if (result == null) controller.release()
+        return result ?: StereoProbeSessionResult(
             success = false,
             medianTimestampDeltaNs = null,
-            halError = "Probe timed out",
+            halError = if (cancelled.get()) "Probe cancelled" else "Probe timed out",
             leftFrameCount = 0,
             rightFrameCount = 0
         )
     }
 
     companion object {
-        private const val PROBE_TIMEOUT_MS = 8_000L
+        private const val MAX_RESOLUTION_ATTEMPTS = 3
+        private const val PROBE_TIMEOUT_MS = 10_000L
     }
 }

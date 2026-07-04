@@ -1,10 +1,13 @@
 package com.example.charucocalibrator.stereo
 
 import com.example.charucocalibrator.Dimensions
-import kotlin.math.abs
-
 object StereoResolutionSelector {
     val FALLBACK_SIZE = Dimensions(width = 1920, height = 1440)
+    private val PROBE_PREFERRED_SIZES = listOf(
+        FALLBACK_SIZE,
+        Dimensions(width = 1280, height = 960),
+        Dimensions(width = 640, height = 480)
+    )
 
     fun highestMatchedResolution(
         leftSizes: List<Dimensions>,
@@ -14,9 +17,9 @@ object StereoResolutionSelector {
         val rightCandidates = filterFourThree(rightSizes)
         if (leftCandidates.isEmpty() || rightCandidates.isEmpty()) return null
 
-        val rightAreas = rightCandidates.map { it.area }.toSet()
+        val rightSizesSet = rightCandidates.toSet()
         return leftCandidates
-            .filter { it.area in rightAreas }
+            .filter { it in rightSizesSet }
             .maxByOrNull { it.area }
     }
 
@@ -24,32 +27,16 @@ object StereoResolutionSelector {
         leftSizes: List<Dimensions>,
         rightSizes: List<Dimensions>
     ): List<Dimensions> {
-        val candidates = mutableListOf<Dimensions>()
-        highestMatchedResolution(leftSizes, rightSizes)?.let(candidates::add)
-        if (candidates.none { it == FALLBACK_SIZE }) {
-            if (
-                leftSizes.any { it == FALLBACK_SIZE } &&
-                rightSizes.any { it == FALLBACK_SIZE }
-            ) {
-                candidates.add(FALLBACK_SIZE)
-            }
-        }
+        val shared = leftSizes.toSet()
+            .intersect(rightSizes.toSet())
+            .filter { it.hasAspectRatio(4, 3) }
+        if (shared.isEmpty()) return emptyList()
 
-        val sharedAreas = leftSizes.map { it.area }.toSet()
-            .intersect(rightSizes.map { it.area }.toSet())
-        filterFourThree(
-            sharedAreas.mapNotNull { area ->
-                leftSizes.find { it.area == area }
-            }
-        )
+        val preferred = PROBE_PREFERRED_SIZES.filter { it in shared }
+        val remaining = shared
+            .filterNot { it in preferred }
             .sortedByDescending { it.area }
-            .forEach { size ->
-                if (candidates.none { it == size }) {
-                    candidates.add(size)
-                }
-            }
-
-        return candidates.distinct()
+        return preferred + remaining
     }
 
     fun filterFourThree(sizes: List<Dimensions>): List<Dimensions> =
