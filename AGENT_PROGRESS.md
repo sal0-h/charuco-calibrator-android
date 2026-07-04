@@ -16,6 +16,12 @@
 - Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes (existing project warnings only).
 - S23 Ultra retest pending: (1) run probe and confirm progress, (2) start the selected or manual `2+5` / `2+6` pair and confirm live delta, (3) save stereo + board pairs and calibrate after 10 captures.
 
+## Stereo probe polish — iteration 3 (disparity performance)
+
+- Replaced per-pixel OpenCV JNI reads and boxed sorting with one bulk `CV_16SC1` read plus a compact histogram for statistics and colormap percentiles.
+- Added left/right size validation, guaranteed native disparity/SGBM cleanup on failures, and explicit PNG compression checks.
+- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.

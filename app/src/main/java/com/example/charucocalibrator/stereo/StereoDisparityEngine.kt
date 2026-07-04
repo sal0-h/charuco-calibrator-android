@@ -20,7 +20,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
 import kotlin.math.max
-import kotlin.math.min
 
 data class StereoSgbmParams(
     val minDisparity: Int = 0,
@@ -69,6 +68,12 @@ class StereoDisparityEngine {
         }
 
         return OpenCvInitializer.withLock {
+            val k1Values = calibration.k1 ?: return@withLock missingMatrix("K1")
+            val d1Values = calibration.d1 ?: return@withLock missingMatrix("D1")
+            val k2Values = calibration.k2 ?: return@withLock missingMatrix("K2")
+            val d2Values = calibration.d2 ?: return@withLock missingMatrix("D2")
+            val rotationValues = calibration.rotation ?: return@withLock missingMatrix("R")
+            val translationValues = calibration.translation ?: return@withLock missingMatrix("T")
             val leftGray = Imgcodecs.imread(leftImageFile.absolutePath, Imgcodecs.IMREAD_GRAYSCALE)
             val rightGray = Imgcodecs.imread(rightImageFile.absolutePath, Imgcodecs.IMREAD_GRAYSCALE)
             if (!OpenCvMatAccess.isAlive(leftGray) || !OpenCvMatAccess.isAlive(rightGray)) {
@@ -76,13 +81,18 @@ class StereoDisparityEngine {
                 rightGray.release()
                 return@withLock StereoDisparityResult(false, "Could not read left/right images")
             }
+            if (leftGray.size() != rightGray.size()) {
+                leftGray.release()
+                rightGray.release()
+                return@withLock StereoDisparityResult(false, "Left/right image sizes do not match")
+            }
 
-            val k1 = calibration.k1?.toMat3x3() ?: return@withLock missingMatrix("K1")
-            val d1 = calibration.d1?.toMatDistortion() ?: return@withLock missingMatrix("D1")
-            val k2 = calibration.k2?.toMat3x3() ?: return@withLock missingMatrix("K2")
-            val d2 = calibration.d2?.toMatDistortion() ?: return@withLock missingMatrix("D2")
-            val rotation = calibration.rotation?.toMat3x3() ?: return@withLock missingMatrix("R")
-            val translation = calibration.translation?.toMatVector() ?: return@withLock missingMatrix("T")
+            val k1 = k1Values.toMat3x3()
+            val d1 = d1Values.toMatDistortion()
+            val k2 = k2Values.toMat3x3()
+            val d2 = d2Values.toMatDistortion()
+            val rotation = rotationValues.toMat3x3()
+            val translation = translationValues.toMatVector()
 
             val imageSize = Size(leftGray.cols().toDouble(), leftGray.rows().toDouble())
             val r1 = Mat()
@@ -96,6 +106,8 @@ class StereoDisparityEngine {
             val map2Right = Mat()
             val rectLeft = Mat()
             val rectRight = Mat()
+            val disparity = Mat()
+            var sgbm: StereoSGBM? = null
 
             try {
                 Calib3d.stereoRectify(
@@ -125,8 +137,7 @@ class StereoDisparityEngine {
                 Imgproc.remap(leftGray, rectLeft, map1Left, map2Left, Imgproc.INTER_LINEAR)
                 Imgproc.remap(rightGray, rectRight, map1Right, map2Right, Imgproc.INTER_LINEAR)
 
-                val disparity = Mat()
-                val sgbm = StereoSGBM.create(
+                sgbm = StereoSGBM.create(
                     params.minDisparity,
                     params.numDisparities,
                     params.blockSize,
@@ -141,7 +152,8 @@ class StereoDisparityEngine {
                 )
                 sgbm.compute(rectLeft, rectRight, disparity)
 
-                val stats = computeDisparityStats(disparity)
+                val rawDisparities = readRawDisparities(disparity)
+                val stats = StereoDisparityAnalysis.analyze(rawDisparities)
                 val epochMs = System.currentTimeMillis()
                 val directory = context.getExternalFilesDir(null) ?: return@withLock StereoDisparityResult(
                     false,
@@ -150,7 +162,13 @@ class StereoDisparityEngine {
                 val pngFile = File(directory, "disparity_$epochMs.png")
                 val jsonFile = File(directory, "disparity_$epochMs.json")
 
-                writeColormapPng(disparity, pngFile)
+                writeColormapPng(
+                    rawDisparities = rawDisparities,
+                    rows = disparity.rows(),
+                    cols = disparity.cols(),
+                    summary = stats,
+                    output = pngFile
+                )
                 jsonFile.writeText(
                     JSONObject().apply {
                         put("generated_at_utc", Instant.now().toString())
@@ -167,8 +185,6 @@ class StereoDisparityEngine {
                         )
                     }.toString(2)
                 )
-
-                disparity.release()
                 StereoDisparityResult(
                     success = true,
                     statusMessage = "Disparity exported",
@@ -201,6 +217,8 @@ class StereoDisparityEngine {
                 map2Right.release()
                 rectLeft.release()
                 rectRight.release()
+                disparity.release()
+                sgbm?.clear()
             }
         }
     }
@@ -208,65 +226,48 @@ class StereoDisparityEngine {
     private fun missingMatrix(name: String): StereoDisparityResult =
         StereoDisparityResult(false, "Calibration missing $name")
 
-    private data class DisparityStats(
-        val min: Double,
-        val max: Double,
-        val validPercent: Double
-    )
-
-    private fun computeDisparityStats(disparity: Mat): DisparityStats {
-        val values = mutableListOf<Double>()
-        val rows = disparity.rows()
-        val cols = disparity.cols()
-        for (row in 0 until rows) {
-            for (column in 0 until cols) {
-                val raw = disparity.get(row, column)?.firstOrNull() ?: continue
-                if (raw <= 0.0) continue
-                values.add(raw / 16.0)
-            }
+    private fun readRawDisparities(disparity: Mat): ShortArray {
+        check(disparity.type() == CvType.CV_16SC1) {
+            "Expected CV_16SC1 disparity, got type ${disparity.type()}"
         }
-        if (values.isEmpty()) {
-            return DisparityStats(min = 0.0, max = 0.0, validPercent = 0.0)
+        val values = ShortArray(disparity.rows() * disparity.cols())
+        val read = disparity.get(0, 0, values)
+        check(read == values.size) {
+            "Read $read/${values.size} disparity values"
         }
-        val validPercent = values.size * 100.0 / (rows * cols)
-        return DisparityStats(
-            min = values.minOrNull() ?: 0.0,
-            max = values.maxOrNull() ?: 0.0,
-            validPercent = validPercent
-        )
+        return values
     }
 
-    private fun writeColormapPng(disparity: Mat, output: File) {
-        val rows = disparity.rows()
-        val cols = disparity.cols()
-        val values = FloatArray(rows * cols)
-        for (row in 0 until rows) {
-            for (column in 0 until cols) {
-                val raw = disparity.get(row, column)?.firstOrNull()?.toFloat() ?: 0f
-                values[row * cols + column] = if (raw > 0f) raw / 16f else 0f
-            }
-        }
-        val valid = values.filter { it > 0f }.sorted()
-        val low = valid.getOrElse((valid.size * 0.02f).toInt().coerceAtMost(valid.lastIndex)) { 0f }
-        val high = valid.getOrElse((valid.size * 0.98f).toInt().coerceAtMost(valid.lastIndex)) { 1f }
-        val range = max(high - low, 1e-3f)
-
+    private fun writeColormapPng(
+        rawDisparities: ShortArray,
+        rows: Int,
+        cols: Int,
+        summary: StereoDisparitySummary,
+        output: File
+    ) {
+        val low = summary.lowPercentileRaw
+        val range = max(summary.highPercentileRaw - low, 1)
         val bitmap = Bitmap.createBitmap(cols, rows, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(cols * rows)
-        for (index in values.indices) {
-            val value = values[index]
-            pixels[index] = if (value <= 0f) {
+        for (index in rawDisparities.indices) {
+            val raw = rawDisparities[index].toInt()
+            pixels[index] = if (raw <= 0) {
                 Color.BLACK
             } else {
-                val normalized = ((value - low) / range).coerceIn(0f, 1f)
+                val normalized = ((raw - low).toFloat() / range).coerceIn(0f, 1f)
                 heatmapColor(normalized)
             }
         }
         bitmap.setPixels(pixels, 0, cols, 0, 0, cols, rows)
-        FileOutputStream(output).use { stream ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        try {
+            FileOutputStream(output).use { stream ->
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                    "PNG compression failed"
+                }
+            }
+        } finally {
+            bitmap.recycle()
         }
-        bitmap.recycle()
     }
 
     private fun heatmapColor(normalized: Float): Int = when {
