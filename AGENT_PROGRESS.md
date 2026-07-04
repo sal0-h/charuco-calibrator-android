@@ -14,21 +14,20 @@
 | --- | --- |
 | v0.1–v0.3 | Camera2 preview, diagnostics, test-frame save |
 | B–I | Sharpness, ChArUco detection, auto-acceptance, calibration JSON, lifecycle cleanup |
-| Phase 1+2 | Capture metadata, stability gates, solver A/B, rich calibration report |
+| Phase 1+2 | Capture metadata, stability gates, rich calibration report |
 | Sub-1 px (#5) | Corner refine, min 18 corners, session isolation, debug overlays, `flags_zero` only |
 | ARCore Explorer (#3) | Diagnostic tool on home screen — not a calibration path |
-| Calibration audit (#4) | `scripts/audit_charuco_from_stored_json.py` + `CALIBRATION_AUDIT.md` |
 
-## Sub-1 px capture (merged #5)
+Pipeline verified on device: stored-corner calibration matches expected behavior; no further offline audit tooling in repo.
+
+## Sub-1 px capture
 
 - `CharucoCornerRefiner` after `detectBoard` in `CharucoFrameDetector.kt`.
 - `MIN_CHARUCO_CORNERS = 18`; UI shows corner count vs minimum.
 - `CaptureSessionManager` tags frames with `capture_session_id` and `capture_frame_index`.
 - Calibrate / clear / export overlays operate on current session only.
 - Debug overlays: `debug_overlays/debug_<session>_frame<N>_ids.jpg`.
-- Solver: `flags_zero` only (rational/fix_k3 A/B removed from calibration path).
-
-**Device audit (session `session_1783163714265`):** 16 frames, RMS **1.8832 px**, Python stored-corner parity exact. See `CALIBRATION_AUDIT.md`.
+- Solver: `flags_zero` only.
 
 ## Build / lint
 
@@ -46,18 +45,6 @@ Base: `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
 | Debug ID overlays | `debug_overlays/debug_<session>_frame<N>_ids.jpg` |
 | Camera report | `camera_report.json` |
 | ARCore snapshots | `arcore_snapshots/` |
-
-## Offline audit
-
-```bash
-python scripts/audit_charuco_from_stored_json.py \
-  --input-dir ./accepted_frames \
-  --session-id <from charuco_calibration_result.json> \
-  --mode stored --flags 0 --frame-filter all \
-  --output-json ./audit.json
-```
-
-Always pass `--session-id` when legacy untagged frames remain on disk.
 
 ## Known limitations
 

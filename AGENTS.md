@@ -12,9 +12,8 @@ wrapper tasks; the notes below only cover non-obvious caveats.
 
 ### Build / lint / test
 
-- Always pass `--no-daemon` to `./gradlew`. This project historically runs in a
-  sandbox that blocks the Gradle daemon's local sockets (see `TESTING_NOTES.md`);
-  `--no-daemon` avoids intermittent daemon failures.
+- Always pass `--no-daemon` to `./gradlew`. Some sandboxes block the Gradle
+  daemon's local sockets; `--no-daemon` avoids intermittent daemon failures.
 - Build: `./gradlew assembleDebug --no-daemon` (the first run auto-installs the
   minor platform `android-36.1` via the SDK manager — allow a few minutes).
 - Lint: `./gradlew lintDebug --no-daemon`.
