@@ -216,26 +216,13 @@ class CharucoCalibrationEngine {
     }
 
     private fun solverVariants(viewCount: Int): List<SolverVariant> {
-        val variants = mutableListOf(
-            SolverVariant(
-                name = "fix_k3",
-                flags = Calib3d.CALIB_FIX_K3,
-                flagsLabel = "CALIB_FIX_K3"
-            ),
+        return listOf(
             SolverVariant(
                 name = "flags_zero",
                 flags = 0,
                 flagsLabel = "0"
             )
         )
-        if (viewCount >= AcceptanceConfig.MIN_VIEWS_FOR_RATIONAL_MODEL) {
-            variants += SolverVariant(
-                name = "rational_model",
-                flags = Calib3d.CALIB_RATIONAL_MODEL,
-                flagsLabel = "CALIB_RATIONAL_MODEL"
-            )
-        }
-        return variants
     }
 
     private fun solveBestVariant(
@@ -400,7 +387,8 @@ class CharucoCalibrationEngine {
         cameraId: String,
         imageWidth: Int,
         imageHeight: Int,
-        acceptedFrames: Int
+        acceptedFrames: Int,
+        captureSessionId: String? = null
     ): File? {
         val cameraMatrix = result.cameraMatrix ?: return null
         val distortion = result.distortionCoefficients ?: return null
@@ -461,6 +449,7 @@ class CharucoCalibrationEngine {
                     put("accepted_frames", acceptedFrames)
                     put("used_frames", result.usedFrames)
                     put("dropped_frames", result.droppedFrames)
+                    captureSessionId?.let { put(CaptureSessionManager.METADATA_KEY, it) }
                     put("outlier_threshold_px", result.outlierThresholdPx)
                     result.captureSummary?.let { summary ->
                         put(

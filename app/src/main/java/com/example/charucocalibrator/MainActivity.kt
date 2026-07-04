@@ -118,6 +118,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
     var pipelineStatus by remember { mutableStateOf("Waiting for camera surface...") }
     var frameSaveMessage by remember { mutableStateOf<String?>(null) }
     var latestSavedFrame by remember { mutableStateOf<SavedFrameFiles?>(null) }
+    var debugExportMessage by remember { mutableStateOf<String?>(null) }
 
     val cameraController = remember(applicationContext) {
         Camera2Controller(
@@ -184,6 +185,7 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             report = report,
             error = diagnosticsError,
             exportMessage = exportMessage,
+            debugExportMessage = debugExportMessage,
             onSaveTestFrame = {
                 frameSaveMessage = if (cameraController.requestSaveNextFrame()) {
                     "Waiting for the next YUV frame..."
@@ -216,6 +218,32 @@ private fun CameraScreen(modifier: Modifier = Modifier) {
             onStartAutoCapture = { cameraController.startAutoCapture() },
             onStopAutoCapture = { cameraController.stopAutoCapture() },
             onClearAcceptedFrames = { cameraController.clearAcceptedFrames() },
+            onStartNewSession = {
+                val sessionId = cameraController.startNewSession()
+                debugExportMessage = "New session: $sessionId"
+            },
+            onExportDebugOverlays = {
+                coroutineScope.launch {
+                    debugExportMessage = "Exporting ID overlays..."
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { cameraController.exportDebugOverlays() }
+                    }
+                    debugExportMessage = result.fold(
+                        onSuccess = { files ->
+                            if (files.isEmpty()) {
+                                "No accepted frames in current session to export"
+                            } else {
+                                "Saved ${files.size} overlay(s):\n" +
+                                    files.joinToString("\n") { it.absolutePath }
+                            }
+                        },
+                        onFailure = {
+                            Log.e(TAG, "Unable to export debug overlays", it)
+                            "Export failed: ${it.message ?: it.javaClass.simpleName}"
+                        }
+                    )
+                }
+            },
             onRunCalibration = { cameraController.runCalibration() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -236,11 +264,14 @@ private fun DiagnosticsPanel(
     report: CameraReport?,
     error: String?,
     exportMessage: String?,
+    debugExportMessage: String?,
     onSaveTestFrame: () -> Unit,
     onExport: () -> Unit,
     onStartAutoCapture: () -> Unit,
     onStopAutoCapture: () -> Unit,
     onClearAcceptedFrames: () -> Unit,
+    onStartNewSession: () -> Unit,
+    onExportDebugOverlays: () -> Unit,
     onRunCalibration: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -311,7 +342,24 @@ private fun DiagnosticsPanel(
                     onClick = onClearAcceptedFrames,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Clear")
+                    Text("Clear session")
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onStartNewSession,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("New session")
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = onExportDebugOverlays,
+                    enabled = (analysisSnapshot?.acceptedFrameCount ?: 0) > 0,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Export ID overlays")
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -324,7 +372,7 @@ private fun DiagnosticsPanel(
                         if (analysisSnapshot?.isCalibrating == true) {
                             "Calibrating..."
                         } else {
-                            "Calibrate"
+                            "Calibrate session"
                         }
                     )
                 }
@@ -345,6 +393,15 @@ private fun DiagnosticsPanel(
                     text = buildCalibrationText(analysisSnapshot),
                     color = Color.White,
                     style = label
+                )
+            }
+
+            debugExportMessage?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
 
@@ -415,7 +472,17 @@ private fun buildLiveStatsText(
     analysisSnapshot?.let { snapshot ->
         appendLine("processed: ${snapshot.processedFrameCount}")
         appendLine("sharpness: ${snapshot.sharpness?.let { "%.1f".format(it) } ?: "n/a"}")
-        appendLine("markers: ${snapshot.markerCount}  corners: ${snapshot.charucoCornerCount}")
+        val cornerCount = snapshot.charucoCornerCount
+        val minCorners = snapshot.minCharucoCornersRequired
+        val cornersLine = "ChArUco corners: $cornerCount (min $minCorners)"
+        appendLine(
+            if (cornerCount < minCorners && snapshot.detectionStatus != "idle") {
+                "$cornersLine  ← below minimum"
+            } else {
+                cornersLine
+            }
+        )
+        appendLine("markers: ${snapshot.markerCount}")
         appendLine("detection: ${snapshot.detectionStatus}")
         snapshot.rejectionReason?.let { appendLine("rejection: $it") }
         snapshot.captureMetadata?.let { metadata ->
@@ -442,7 +509,10 @@ private fun buildLiveStatsText(
 }
 
 private fun buildAcceptanceText(snapshot: FrameAnalysisSnapshot): String = buildString {
-    appendLine("accepted: ${snapshot.acceptedFrameCount}/${snapshot.maxAcceptedFrames}")
+    snapshot.captureSessionId?.let { appendLine("session: $it") }
+    appendLine(
+        "accepted (session): ${snapshot.acceptedFrameCount}/${snapshot.maxAcceptedFrames}"
+    )
     appendLine("auto capture: ${if (snapshot.autoCaptureActive) "on" else "off"}")
     snapshot.lastAcceptanceReason?.let { appendLine("last decision: $it") }
     snapshot.bboxAreaRatio?.let { append("coverage: ${"%.3f".format(it)}") }
