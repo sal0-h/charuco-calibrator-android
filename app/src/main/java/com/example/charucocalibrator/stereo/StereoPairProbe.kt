@@ -39,21 +39,24 @@ class StereoPairProbe(
         onPairFinished: ((StereoPairProbeResult) -> Unit)? = null
     ): List<StereoPairProbeResult> {
         cancelled.set(false)
+        val deadlineMs = monotonicMs() + MAX_PROBE_RUNTIME_MS
         val pairs = StereoPhysicalCameraEnumerator.prioritizedPairs(cameras)
         val results = mutableListOf<StereoPairProbeResult>()
         for ((pairOffset, pair) in pairs.withIndex()) {
-            if (cancelled.get()) break
+            if (cancelled.get() || monotonicMs() >= deadlineMs) break
             val (left, right) = pair
             val result = probePair(
                 left = left,
                 right = right,
                 pairIndex = pairOffset + 1,
                 pairCount = pairs.size,
+                deadlineMs = deadlineMs,
                 onProgress = onProgress
             )
             if (cancelled.get()) break
             results.add(result)
             onPairFinished?.invoke(result)
+            if (result.success) break
         }
         return results
     }
@@ -63,6 +66,7 @@ class StereoPairProbe(
         right: StereoPhysicalCameraInfo,
         pairIndex: Int = 1,
         pairCount: Int = 1,
+        deadlineMs: Long = Long.MAX_VALUE,
         onProgress: ((StereoProbeProgress) -> Unit)? = null
     ): StereoPairProbeResult {
         val pairLabel = StereoPhysicalCameraEnumerator.pairLabel(left, right)
@@ -87,7 +91,7 @@ class StereoPairProbe(
         val firstCandidate = candidates.first()
 
         for ((index, resolution) in candidates.withIndex()) {
-            if (cancelled.get()) break
+            if (cancelled.get() || monotonicMs() >= deadlineMs) break
             onProgress?.invoke(
                 StereoProbeProgress(
                     pairIndex = pairIndex,
@@ -133,6 +137,11 @@ class StereoPairProbe(
                 medianTimestampDeltaNs = null,
                 halError = "Probe cancelled"
             )
+        }
+
+        if (monotonicMs() >= deadlineMs) {
+            fallbackReason = "probe_time_limit_reached"
+            lastHalError = "Probe stopped after ${MAX_PROBE_RUNTIME_MS / 1_000}s; untested pairs remain selectable manually"
         }
 
         return StereoPairProbeResult(
@@ -181,6 +190,9 @@ class StereoPairProbe(
 
     companion object {
         private const val MAX_RESOLUTION_ATTEMPTS = 3
+        private const val MAX_PROBE_RUNTIME_MS = 30_000L
         private const val PROBE_TIMEOUT_MS = 10_000L
+
+        private fun monotonicMs(): Long = System.nanoTime() / 1_000_000L
     }
 }

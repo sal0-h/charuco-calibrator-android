@@ -8,6 +8,14 @@
 - Duplicate wide cameras are each prioritized with ultrawide/tele candidates, and pair labels include physical IDs.
 - Cloud verification: `testDebugUnitTest` passes. Physical S23 Ultra retest pending: run probe, then manually start IDs `2+5` and `2+6` if no PASS appears.
 
+## Stereo probe polish — iteration 2 (guided workflow and capture safety)
+
+- Replaced the undifferentiated control list with six cards: Setup, Select pair, Stream, Capture, Calibrate, and Disparity. Probe progress/cancel, a pinned status banner, readiness explanations, and the live timestamp hero metric are visible in context.
+- Probe runtime is capped at 30 seconds and stops at the first working pair; every untested or failed pair remains manually selectable.
+- Calibration board captures now record physical camera IDs and only solve/clear the selected pair. ChArUco detection reads the NV21 luma plane directly instead of JPEG-encoding and decoding it first.
+- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes (existing project warnings only).
+- S23 Ultra retest pending: (1) run probe and confirm progress, (2) start the selected or manual `2+5` / `2+6` pair and confirm live delta, (3) save stereo + board pairs and calibrate after 10 captures.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.
