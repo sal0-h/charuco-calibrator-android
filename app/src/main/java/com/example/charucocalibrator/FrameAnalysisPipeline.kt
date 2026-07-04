@@ -147,6 +147,24 @@ class FrameAnalysisPipeline(
         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
     }
 
+    fun startNewSession(): String {
+        val sessionId = acceptedFrameStore.startNewSession()
+        frameAcceptance.clearHistory()
+        latestCalibrationResult = null
+        latestCalibrationPath = null
+        latestCalibrationStatus = null
+        publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+        return sessionId
+    }
+
+    fun exportDebugOverlays(): List<java.io.File> {
+        return CharucoDebugOverlayExporter.exportOverlays(
+            context = applicationContext,
+            frames = acceptedFrameStore.frames,
+            sessionId = acceptedFrameStore.currentSessionId
+        )
+    }
+
     fun runCalibration() {
         if (isCalibrating) return
 
@@ -188,7 +206,8 @@ class FrameAnalysisPipeline(
                         cameraId = cameraId,
                         imageWidth = imageWidth,
                         imageHeight = imageHeight,
-                        acceptedFrames = frames.size
+                        acceptedFrames = frames.size,
+                        captureSessionId = acceptedFrameStore.currentSessionId
                     )?.absolutePath
                 } else {
                     null
@@ -347,7 +366,9 @@ class FrameAnalysisPipeline(
             calibrationCx = latestCalibrationResult?.cx,
             calibrationCy = latestCalibrationResult?.cy,
             calibrationOutputPath = latestCalibrationPath,
-            isCalibrating = isCalibrating
+            isCalibrating = isCalibrating,
+            captureSessionId = acceptedFrameStore.currentSessionId,
+            minCharucoCornersRequired = AcceptanceConfig.MIN_CHARUCO_CORNERS
         )
         mainHandler.post {
             if (!released) onSnapshot(snapshot)

@@ -214,6 +214,10 @@ class Camera2Controller(
         frameAnalysisPipeline.clearAcceptedFrames()
     }
 
+    fun startNewSession(): String = frameAnalysisPipeline.startNewSession()
+
+    fun exportDebugOverlays(): List<File> = frameAnalysisPipeline.exportDebugOverlays()
+
     fun runCalibration() {
         frameAnalysisPipeline.runCalibration()
     }

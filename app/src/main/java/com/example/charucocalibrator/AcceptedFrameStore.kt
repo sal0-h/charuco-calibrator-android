@@ -20,7 +20,9 @@ data class AcceptedFrameRecord(
     val markerCount: Int,
     val charucoCornerCount: Int,
     val sharpness: Double,
-    val bbox: DetectionBoundingBox
+    val bbox: DetectionBoundingBox,
+    val sessionId: String,
+    val frameIndex: Int
 ) {
     fun release() {
         charucoCorners.release()
@@ -31,16 +33,28 @@ data class AcceptedFrameRecord(
 }
 
 class AcceptedFrameStore(
-    private val context: Context
+    private val context: Context,
+    private val sessionManager: CaptureSessionManager = CaptureSessionManager()
 ) {
     private val lock = Any()
     private val records = mutableListOf<AcceptedFrameRecord>()
 
+    val currentSessionId: String
+        get() = sessionManager.currentSessionId
+
     val frames: List<AcceptedFrameRecord>
-        get() = synchronized(lock) { records.toList() }
+        get() = synchronized(lock) { currentSessionRecords().toList() }
 
     val count: Int
-        get() = synchronized(lock) { records.size }
+        get() = synchronized(lock) { currentSessionRecords().size }
+
+    fun startNewSession(): String {
+        synchronized(lock) {
+            records.forEach(AcceptedFrameRecord::release)
+            records.clear()
+        }
+        return sessionManager.startNewSession()
+    }
 
     fun saveFrame(
         gray: Mat,
@@ -61,6 +75,9 @@ class AcceptedFrameStore(
         val ids = detection.charucoIds ?: return null
         val markers = detection.markerCorners ?: return null
         val markerIds = detection.markerIds ?: return null
+
+        val sessionId = sessionManager.currentSessionId
+        val frameIndex = sessionManager.nextFrameIndex()
 
         val directory = File(
             checkNotNull(context.getExternalFilesDir(null)) {
@@ -86,6 +103,8 @@ class AcceptedFrameStore(
                 put("image_height", height)
                 put("timestamp", Instant.now().toString())
                 put("sensor_timestamp_ns", sensorTimestampNs ?: JSONObject.NULL)
+                put(CaptureSessionManager.METADATA_KEY, sessionId)
+                put(CaptureSessionManager.FRAME_INDEX_KEY, frameIndex)
                 captureMetadata?.appendToJson(this)
                 put("marker_count", detection.markerCount)
                 put("charuco_corner_count", detection.charucoCornerCount)
@@ -113,7 +132,9 @@ class AcceptedFrameStore(
                 markerCount = detection.markerCount,
                 charucoCornerCount = detection.charucoCornerCount,
                 sharpness = sharpness,
-                bbox = bbox
+                bbox = bbox,
+                sessionId = sessionId,
+                frameIndex = frameIndex
             )
             synchronized(lock) {
                 records += record
@@ -132,10 +153,10 @@ class AcceptedFrameStore(
     fun framesForCalibration(): List<AcceptedFrameRecord> {
         val inMemory = frames
         if (inMemory.isNotEmpty()) return inMemory
-        return loadPersistedFrames()
+        return loadPersistedFrames(sessionManager.currentSessionId)
     }
 
-    fun loadPersistedFrames(): List<AcceptedFrameRecord> {
+    fun loadPersistedFrames(sessionId: String): List<AcceptedFrameRecord> {
         val directory = File(
             context.getExternalFilesDir(null) ?: return emptyList(),
             ACCEPTED_FRAMES_DIR
@@ -144,16 +165,19 @@ class AcceptedFrameStore(
 
         return directory.listFiles { file -> file.extension == "json" }
             ?.sortedBy { it.name }
-            ?.mapNotNull(::loadPersistedFrame)
+            ?.mapNotNull { metadataFile -> loadPersistedFrame(metadataFile, sessionId) }
             ?: emptyList()
     }
 
-    private fun loadPersistedFrame(metadataFile: File): AcceptedFrameRecord? {
+    private fun loadPersistedFrame(metadataFile: File, sessionId: String): AcceptedFrameRecord? {
         val imageFile = File(metadataFile.parentFile, metadataFile.nameWithoutExtension + ".jpg")
         if (!imageFile.isFile) return null
 
         return runCatching {
             val metadata = JSONObject(metadataFile.readText())
+            val frameSessionId = metadata.optString(CaptureSessionManager.METADATA_KEY, "")
+            if (frameSessionId != sessionId) return null
+
             val persisted = CharucoCornerPersistence.readFromMetadata(metadata)
                 ?: return null
             val bbox = DetectionBoundingBox(
@@ -180,7 +204,9 @@ class AcceptedFrameStore(
                 markerCount = metadata.optInt("marker_count"),
                 charucoCornerCount = metadata.optInt("charuco_corner_count", persisted.ids.size),
                 sharpness = metadata.optDouble("sharpness"),
-                bbox = bbox
+                bbox = bbox,
+                sessionId = frameSessionId,
+                frameIndex = metadata.optInt(CaptureSessionManager.FRAME_INDEX_KEY, 0)
             )
         }.onFailure { error ->
             Log.w(TAG, "Failed to load persisted frame ${metadataFile.name}", error)
@@ -189,10 +215,13 @@ class AcceptedFrameStore(
 
     fun clear() {
         synchronized(lock) {
-            records.forEach(AcceptedFrameRecord::release)
-            records.clear()
+            currentSessionRecords().forEach(AcceptedFrameRecord::release)
+            records.removeAll { it.sessionId == sessionManager.currentSessionId }
         }
     }
+
+    private fun currentSessionRecords(): List<AcceptedFrameRecord> =
+        records.filter { it.sessionId == sessionManager.currentSessionId }
 
     companion object {
         const val ACCEPTED_FRAMES_DIR = "accepted_frames"

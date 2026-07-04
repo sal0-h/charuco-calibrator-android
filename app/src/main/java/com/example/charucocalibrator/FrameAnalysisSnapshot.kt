@@ -30,5 +30,7 @@ data class FrameAnalysisSnapshot(
     val calibrationCx: Double? = null,
     val calibrationCy: Double? = null,
     val calibrationOutputPath: String? = null,
-    val isCalibrating: Boolean = false
+    val isCalibrating: Boolean = false,
+    val captureSessionId: String? = null,
+    val minCharucoCornersRequired: Int = AcceptanceConfig.MIN_CHARUCO_CORNERS
 )

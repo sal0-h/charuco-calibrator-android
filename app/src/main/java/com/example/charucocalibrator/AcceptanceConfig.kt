@@ -1,7 +1,7 @@
 package com.example.charucocalibrator
 
 object AcceptanceConfig {
-    const val MIN_CHARUCO_CORNERS = 12
+    const val MIN_CHARUCO_CORNERS = 18
     const val SHARPNESS_THRESHOLD = 100.0
     const val MIN_BBOX_AREA_RATIO = 0.10
     const val MIN_TIME_BETWEEN_ACCEPTED_MS = 900L

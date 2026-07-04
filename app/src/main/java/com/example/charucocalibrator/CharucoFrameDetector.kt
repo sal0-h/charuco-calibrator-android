@@ -65,6 +65,9 @@ class CharucoFrameDetector {
         return try {
             detector.detectBoard(bgr, charucoCorners, charucoIds, markerCorners, markerIds)
             val markerCount = markerIds.rows()
+            if (charucoIds.rows() > 0) {
+                CharucoCornerRefiner.refine(gray, charucoCorners)
+            }
             val cornerCount = charucoIds.rows()
             if (cornerCount == 0) {
                 DetectionResult(
