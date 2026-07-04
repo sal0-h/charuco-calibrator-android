@@ -19,6 +19,7 @@ import com.example.charucocalibrator.R
 @Composable
 fun HomeScreen(
     onOpenCharuco: () -> Unit,
+    onOpenArCore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -47,6 +48,28 @@ fun HomeScreen(
                 )
                 Text(
                     text = stringResource(R.string.tool_charuco_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp)
+                .clickable(onClick = onOpenArCore),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = stringResource(R.string.tool_arcore_title),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = stringResource(R.string.tool_arcore_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)

@@ -4,4 +4,10 @@
     <string name="tool_charuco_title">ChArUco Calibrator</string>
     <string name="tool_charuco_subtitle">Camera2 board calibration</string>
     <string name="nav_back">Back</string>
+    <string name="tool_arcore_title">ARCore Explorer</string>
+    <string name="tool_arcore_subtitle">ARCore diagnostics and snapshot export</string>
+    <string name="arcore_explorer_title">ARCore Explorer</string>
+    <string name="arcore_intrinsics_warning">Diagnostics only. ARCore session stream is separate from ChArUco Camera2 camera_id 0 at 4000×3000. Not a calibration replacement.</string>
+    <string name="arcore_experimental_overlay_title">Experimental depth overlay</string>
+    <string name="arcore_experimental_overlay_hint">Approximate alignment; portrait preview rotates landscape depth 90°. Not pixel-perfect.</string>
 </resources>
