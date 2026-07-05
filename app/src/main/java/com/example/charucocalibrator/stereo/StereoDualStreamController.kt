@@ -47,6 +47,11 @@ data class StereoFrameSnapshot(
     val metadata: FrameMetadata?
 )
 
+private data class StereoFrameSample(
+    val sensorTimestampNs: Long,
+    val metadata: FrameMetadata?
+)
+
 data class StereoLiveState(
     val streamState: StereoStreamState = StereoStreamState.IDLE,
     val leftPhysicalId: String? = null,
@@ -140,12 +145,19 @@ class StereoDualStreamController(
     private var leftTextureView: TextureView? = null
     private var rightTextureView: TextureView? = null
 
-    private val latestLeftFrame = AtomicReference<StereoFrameSnapshot?>(null)
-    private val latestRightFrame = AtomicReference<StereoFrameSnapshot?>(null)
-    private val latestMatchedPair = AtomicReference<Pair<StereoFrameSnapshot, StereoFrameSnapshot>?>(null)
-    private val timestampPairer = StereoTimestampPairer<StereoFrameSnapshot>(
+    private val latestLeftSample = AtomicReference<StereoFrameSample?>(null)
+    private val latestRightSample = AtomicReference<StereoFrameSample?>(null)
+    private val timestampPairer = StereoTimestampPairer<StereoFrameSample>(
         timestampNs = { it.sensorTimestampNs }
     )
+    private val capturePairer = StereoTimestampPairer<StereoFrameSnapshot>(
+        timestampNs = { it.sensorTimestampNs },
+        maximumQueuedFrames = 2
+    )
+    private val pendingPairCapture = AtomicReference<
+        ((Result<Pair<StereoFrameSnapshot, StereoFrameSnapshot>>) -> Unit)?
+        >(null)
+    private val captureArmedOperationId = AtomicLong(NO_OPERATION_ID)
 
     private var leftFrameCount = 0L
     private var rightFrameCount = 0L
@@ -153,8 +165,10 @@ class StereoDualStreamController(
     private var rightFpsWindowStartMs = 0L
     private var leftFpsCount = 0
     private var rightFpsCount = 0
+    private var lastLiveStateDispatchAtMs = 0L
 
     private val timestampDeltas = ArrayDeque<Long>()
+    private val timestampDeltaLock = Any()
 
     fun start(
         leftId: String,
@@ -167,6 +181,7 @@ class StereoDualStreamController(
         reason: String? = null
     ) {
         if (released.get()) return
+        cancelPendingPairCapture("Stream restarted before capture completed")
         val requestedOperationId = operationId.incrementAndGet()
         shouldRun = true
         leftPhysicalId = leftId
@@ -180,17 +195,18 @@ class StereoDualStreamController(
         focusLocked = false
         fixedFocusDistance = null
         warmupFocusSamples.clear()
-        timestampDeltas.clear()
+        synchronized(timestampDeltaLock) { timestampDeltas.clear() }
         leftFrameCount = 0
         rightFrameCount = 0
         leftFpsWindowStartMs = 0L
         rightFpsWindowStartMs = 0L
         leftFpsCount = 0
         rightFpsCount = 0
-        latestLeftFrame.set(null)
-        latestRightFrame.set(null)
-        latestMatchedPair.set(null)
+        lastLiveStateDispatchAtMs = 0L
+        latestLeftSample.set(null)
+        latestRightSample.set(null)
         timestampPairer.clear()
+        capturePairer.clear()
         leftMetadataStore.clear()
         rightMetadataStore.clear()
         updateState(
@@ -232,6 +248,7 @@ class StereoDualStreamController(
         val stoppedOperationId = operationId.incrementAndGet()
         shouldRun = false
         streamActive.set(false)
+        cancelPendingPairCapture("Streams stopped before capture completed")
         cameraHandler.post {
             closeCameraResources()
             if (!released.get() && operationId.get() == stoppedOperationId) {
@@ -253,6 +270,9 @@ class StereoDualStreamController(
         operationId.incrementAndGet()
         shouldRun = false
         streamActive.set(false)
+        captureArmedOperationId.set(NO_OPERATION_ID)
+        pendingPairCapture.set(null)
+        capturePairer.clear()
         cameraHandler.post {
             closeCameraResources()
             cameraThread.quitSafely()
@@ -261,9 +281,39 @@ class StereoDualStreamController(
         (sessionExecutor as? java.util.concurrent.ExecutorService)?.shutdown()
     }
 
-    fun getLatestFrames(): Pair<StereoFrameSnapshot?, StereoFrameSnapshot?> =
-        latestMatchedPair.get()?.let { it.first to it.second }
-            ?: (null to null)
+    fun captureNextPair(
+        onComplete: (Result<Pair<StereoFrameSnapshot, StereoFrameSnapshot>>) -> Unit
+    ): Boolean {
+        val requestedOperationId = operationId.get()
+        if (!isCurrent(requestedOperationId) || !streamActive.get()) return false
+        if (!pendingPairCapture.compareAndSet(null, onComplete)) return false
+
+        imageHandler.post {
+            if (!isCurrent(requestedOperationId) || !streamActive.get()) {
+                completePendingPairCapture(
+                    Result.failure(IllegalStateException("Stereo streams are not active"))
+                )
+                return@post
+            }
+            capturePairer.clear()
+            captureArmedOperationId.set(requestedOperationId)
+            imageHandler.postDelayed({
+                if (captureArmedOperationId.compareAndSet(
+                        requestedOperationId,
+                        NO_OPERATION_ID
+                    )
+                ) {
+                    capturePairer.clear()
+                    completePendingPairCapture(
+                        Result.failure(
+                            IllegalStateException("Timed out waiting for a synchronized frame pair")
+                        )
+                    )
+                }
+            }, CAPTURE_PAIR_TIMEOUT_MS)
+        }
+        return true
+    }
 
     fun probePair(
         leftId: String,
@@ -309,9 +359,9 @@ class StereoDualStreamController(
             val result = StereoProbeEvaluator.terminalResult(
                 StereoProbeSnapshot(
                     streamState = state.streamState,
-                    leftFrameCount = leftFrameCount,
-                    rightFrameCount = rightFrameCount,
-                    timestampDeltasNs = timestampDeltas.toList(),
+                    leftFrameCount = state.leftFrameCount,
+                    rightFrameCount = state.rightFrameCount,
+                    timestampDeltasNs = timestampDeltaSnapshot(),
                     halError = state.halError,
                     collectionComplete = collectionComplete,
                     timedOut = openingTimedOut
@@ -627,42 +677,39 @@ class StereoDualStreamController(
 
         image.use {
             try {
-                val nv21 = StereoYuvUtil.yuv420888ToNv21(it)
                 if (!isCurrent(requestedOperationId)) return@use
                 val timestamp = it.timestamp
                 val metadataStore = if (isLeft) leftMetadataStore else rightMetadataStore
                 val metadata = metadataStore.lookup(timestamp, consume = false)
-                val snapshot = StereoFrameSnapshot(
-                    width = it.cropRect.width(),
-                    height = it.cropRect.height(),
+                val sample = StereoFrameSample(
                     sensorTimestampNs = timestamp,
-                    nv21 = nv21,
                     metadata = metadata
                 )
                 if (isLeft) {
-                    latestLeftFrame.set(snapshot)
+                    latestLeftSample.set(sample)
                     leftFrameCount++
                     leftFpsCount++
                 } else {
-                    latestRightFrame.set(snapshot)
+                    latestRightSample.set(sample)
                     rightFrameCount++
                     rightFpsCount++
                 }
 
                 val matchedPair = if (isLeft) {
-                    timestampPairer.offerLeft(snapshot)
+                    timestampPairer.offerLeft(sample)
                 } else {
-                    timestampPairer.offerRight(snapshot)
+                    timestampPairer.offerRight(sample)
                 }
                 val delta = matchedPair?.let { (left, right) ->
                     val value = StereoTimestampUtils.deltaNs(
                         left.sensorTimestampNs,
                         right.sensorTimestampNs
                     )
-                    latestMatchedPair.set(left to right)
-                    timestampDeltas.addLast(value)
-                    while (timestampDeltas.size > MAX_DELTA_SAMPLES) {
-                        timestampDeltas.removeFirst()
+                    synchronized(timestampDeltaLock) {
+                        timestampDeltas.addLast(value)
+                        while (timestampDeltas.size > MAX_DELTA_SAMPLES) {
+                            timestampDeltas.removeFirst()
+                        }
                     }
                     value
                 } ?: currentState.timestampDeltaNs
@@ -688,18 +735,18 @@ class StereoDualStreamController(
 
                 val warning = buildWarning(
                     delta = delta,
-                    leftMetadata = latestLeftFrame.get()?.metadata,
-                    rightMetadata = latestRightFrame.get()?.metadata
+                    leftMetadata = latestLeftSample.get()?.metadata,
+                    rightMetadata = latestRightSample.get()?.metadata
                 )
 
-                updateState(
+                updateFrameState(
                     currentState.copy(
                         streamState = if (streamActive.get()) StereoStreamState.STREAMING else currentState.streamState,
                         leftFps = leftFps,
                         rightFps = rightFps,
                         timestampDeltaNs = delta,
-                        leftMetadata = latestLeftFrame.get()?.metadata,
-                        rightMetadata = latestRightFrame.get()?.metadata,
+                        leftMetadata = latestLeftSample.get()?.metadata,
+                        rightMetadata = latestRightSample.get()?.metadata,
                         leftFrameCount = leftFrameCount,
                         rightFrameCount = rightFrameCount,
                         warningMessage = warning,
@@ -707,8 +754,42 @@ class StereoDualStreamController(
                         oisDisabled = true
                     )
                 )
+
+                if (captureArmedOperationId.get() == requestedOperationId &&
+                    pendingPairCapture.get() != null
+                ) {
+                    val snapshot = StereoFrameSnapshot(
+                        width = it.cropRect.width(),
+                        height = it.cropRect.height(),
+                        sensorTimestampNs = timestamp,
+                        nv21 = StereoYuvUtil.yuv420888ToNv21(it),
+                        metadata = metadata
+                    )
+                    val capturedPair = if (isLeft) {
+                        capturePairer.offerLeft(snapshot)
+                    } else {
+                        capturePairer.offerRight(snapshot)
+                    }
+                    if (capturedPair != null &&
+                        captureArmedOperationId.compareAndSet(
+                            requestedOperationId,
+                            NO_OPERATION_ID
+                        )
+                    ) {
+                        capturePairer.clear()
+                        completePendingPairCapture(Result.success(capturedPair))
+                    }
+                }
             } catch (exception: Exception) {
                 Log.w(TAG, "Frame processing failed", exception)
+                if (captureArmedOperationId.compareAndSet(
+                        requestedOperationId,
+                        NO_OPERATION_ID
+                    )
+                ) {
+                    capturePairer.clear()
+                    completePendingPairCapture(Result.failure(exception))
+                }
             }
         }
     }
@@ -809,11 +890,33 @@ class StereoDualStreamController(
         rightPreviewSurface = null
     }
 
+    private fun timestampDeltaSnapshot(): List<Long> =
+        synchronized(timestampDeltaLock) { timestampDeltas.toList() }
+
+    private fun completePendingPairCapture(
+        result: Result<Pair<StereoFrameSnapshot, StereoFrameSnapshot>>
+    ) {
+        captureArmedOperationId.set(NO_OPERATION_ID)
+        capturePairer.clear()
+        pendingPairCapture.getAndSet(null)?.let { callback ->
+            postToMain { callback(result) }
+        }
+    }
+
+    private fun cancelPendingPairCapture(message: String) {
+        captureArmedOperationId.set(NO_OPERATION_ID)
+        capturePairer.clear()
+        pendingPairCapture.getAndSet(null)?.let { callback ->
+            postToMain { callback(Result.failure(IllegalStateException(message))) }
+        }
+    }
+
     private fun fail(requestedOperationId: Long, message: String) {
         if (!isCurrent(requestedOperationId)) return
         Log.e(TAG, message)
         shouldRun = false
         streamActive.set(false)
+        cancelPendingPairCapture(message)
         updateState(
             currentState.copy(
                 streamState = StereoStreamState.FAILED,
@@ -835,6 +938,15 @@ class StereoDualStreamController(
         postToMain { if (!released.get()) onStateChanged(state) }
     }
 
+    private fun updateFrameState(state: StereoLiveState) {
+        currentState = state
+        val now = System.nanoTime() / 1_000_000L
+        if (now - lastLiveStateDispatchAtMs >= LIVE_STATE_DISPATCH_INTERVAL_MS) {
+            lastLiveStateDispatchAtMs = now
+            postToMain { if (!released.get()) onStateChanged(state) }
+        }
+    }
+
     private fun postToMain(action: () -> Unit) {
         if (!released.get()) {
             mainHandler.post { if (!released.get()) action() }
@@ -849,7 +961,10 @@ class StereoDualStreamController(
         private const val PROBE_DURATION_MS = 2_000L
         private const val PROBE_TOTAL_TIMEOUT_MS = OPEN_TIMEOUT_MS + PROBE_DURATION_MS + 1_000L
         private const val PROBE_POLL_INTERVAL_MS = 100L
+        private const val CAPTURE_PAIR_TIMEOUT_MS = 3_000L
         private const val FPS_WINDOW_MS = 1_000L
+        private const val LIVE_STATE_DISPATCH_INTERVAL_MS = 100L
         private const val MAX_DELTA_SAMPLES = 120
+        private const val NO_OPERATION_ID = -1L
     }
 }

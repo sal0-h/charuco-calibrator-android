@@ -7,6 +7,7 @@ import android.graphics.YuvImage
 import com.example.charucocalibrator.AcceptanceConfig
 import com.example.charucocalibrator.CharucoFrameDetector
 import com.example.charucocalibrator.DetectionResult
+import com.example.charucocalibrator.Dimensions
 import com.example.charucocalibrator.OpenCvMatAccess
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +24,8 @@ data class StereoBoardPairRecord(
     val cornersFile: File,
     val leftPhysicalCameraId: String,
     val rightPhysicalCameraId: String,
+    val leftResolution: Dimensions?,
+    val rightResolution: Dimensions?,
     val leftCornerCount: Int,
     val rightCornerCount: Int,
     val timestampDeltaNs: Long?
@@ -51,16 +54,23 @@ class StereoBoardPairStore(
 
     fun count(): Int = listPairs().size
 
-    fun listPairs(
-        leftPhysicalCameraId: String,
-        rightPhysicalCameraId: String
-    ): List<StereoBoardPairRecord> = listPairs().filter { record ->
-        record.leftPhysicalCameraId == leftPhysicalCameraId &&
-            record.rightPhysicalCameraId == rightPhysicalCameraId
-    }
+    fun listPairs(sessionKey: StereoCalibrationSessionKey): List<StereoBoardPairRecord> =
+        listPairs().filter { record ->
+            sessionKey.matches(
+                leftPhysicalCameraId = record.leftPhysicalCameraId,
+                rightPhysicalCameraId = record.rightPhysicalCameraId,
+                leftResolution = record.leftResolution,
+                rightResolution = record.rightResolution
+            )
+        }
 
-    fun count(leftPhysicalCameraId: String, rightPhysicalCameraId: String): Int =
-        listPairs(leftPhysicalCameraId, rightPhysicalCameraId).size
+    fun count(sessionKey: StereoCalibrationSessionKey): Int = listPairs(sessionKey).size
+
+    fun clear(sessionKey: StereoCalibrationSessionKey) {
+        listPairs(sessionKey).forEach { record ->
+            record.directory.deleteRecursively()
+        }
+    }
 
     fun clear() {
         baseDirectory.listFiles()?.forEach { file ->
@@ -68,20 +78,29 @@ class StereoBoardPairStore(
         }
     }
 
-    fun clear(leftPhysicalCameraId: String, rightPhysicalCameraId: String) {
-        listPairs(leftPhysicalCameraId, rightPhysicalCameraId).forEach { record ->
-            record.directory.deleteRecursively()
-        }
-    }
-
     fun savePair(
         leftFrame: StereoFrameSnapshot,
         rightFrame: StereoFrameSnapshot,
-        leftPhysicalCameraId: String,
-        rightPhysicalCameraId: String
+        sessionKey: StereoCalibrationSessionKey
     ): Result<StereoBoardPairRecord> = runCatching {
-        require(leftPhysicalCameraId.isNotBlank() && rightPhysicalCameraId.isNotBlank()) {
+        require(
+            sessionKey.leftPhysicalCameraId.isNotBlank() &&
+                sessionKey.rightPhysicalCameraId.isNotBlank()
+        ) {
             "Physical camera IDs are required for a calibration pair"
+        }
+        val leftResolution = Dimensions(leftFrame.width, leftFrame.height)
+        val rightResolution = Dimensions(rightFrame.width, rightFrame.height)
+        require(
+            sessionKey.matches(
+                leftPhysicalCameraId = sessionKey.leftPhysicalCameraId,
+                rightPhysicalCameraId = sessionKey.rightPhysicalCameraId,
+                leftResolution = leftResolution,
+                rightResolution = rightResolution
+            )
+        ) {
+            "Captured frame sizes $leftResolution and $rightResolution do not match " +
+                "the ${sessionKey.resolution} calibration session"
         }
         val leftDetection = detectFromFrame(leftFrame)
         val rightDetection = try {
@@ -122,8 +141,9 @@ class StereoBoardPairStore(
                 buildCornersJson(
                     leftDetection = leftDetection,
                     rightDetection = rightDetection,
-                    leftPhysicalCameraId = leftPhysicalCameraId,
-                    rightPhysicalCameraId = rightPhysicalCameraId,
+                    sessionKey = sessionKey,
+                    leftResolution = leftResolution,
+                    rightResolution = rightResolution,
                     timestampDeltaNs = timestampDeltaNs
                 ).toString(2)
             )
@@ -134,8 +154,10 @@ class StereoBoardPairStore(
                 leftImageFile = leftFile,
                 rightImageFile = rightFile,
                 cornersFile = cornersFile,
-                leftPhysicalCameraId = leftPhysicalCameraId,
-                rightPhysicalCameraId = rightPhysicalCameraId,
+                leftPhysicalCameraId = sessionKey.leftPhysicalCameraId,
+                rightPhysicalCameraId = sessionKey.rightPhysicalCameraId,
+                leftResolution = leftResolution,
+                rightResolution = rightResolution,
                 leftCornerCount = leftCount,
                 rightCornerCount = rightCount,
                 timestampDeltaNs = timestampDeltaNs
@@ -181,13 +203,16 @@ class StereoBoardPairStore(
     private fun buildCornersJson(
         leftDetection: DetectionResult,
         rightDetection: DetectionResult,
-        leftPhysicalCameraId: String,
-        rightPhysicalCameraId: String,
+        sessionKey: StereoCalibrationSessionKey,
+        leftResolution: Dimensions,
+        rightResolution: Dimensions,
         timestampDeltaNs: Long
     ): JSONObject = JSONObject().apply {
         put("timestamp_delta_ns", timestampDeltaNs)
-        put("left_physical_camera_id", leftPhysicalCameraId)
-        put("right_physical_camera_id", rightPhysicalCameraId)
+        put("left_physical_camera_id", sessionKey.leftPhysicalCameraId)
+        put("right_physical_camera_id", sessionKey.rightPhysicalCameraId)
+        put("left_resolution", leftResolution.toJsonArray())
+        put("right_resolution", rightResolution.toJsonArray())
         put("left", detectionToJson(leftDetection))
         put("right", detectionToJson(rightDetection))
     }
@@ -216,9 +241,16 @@ class StereoBoardPairStore(
             cornersFile = File(directory, "corners.json"),
             leftPhysicalCameraId = corners.optString("left_physical_camera_id"),
             rightPhysicalCameraId = corners.optString("right_physical_camera_id"),
+            leftResolution = corners.optJSONArray("left_resolution")?.toDimensions(),
+            rightResolution = corners.optJSONArray("right_resolution")?.toDimensions(),
             leftCornerCount = corners.getJSONObject("left").getInt("corner_count"),
             rightCornerCount = corners.getJSONObject("right").getInt("corner_count"),
             timestampDeltaNs = corners.optLong("timestamp_delta_ns")
         )
     }.getOrNull()
+
+    private fun Dimensions.toJsonArray(): JSONArray = JSONArray().put(width).put(height)
+
+    private fun JSONArray.toDimensions(): Dimensions =
+        Dimensions(width = getInt(0), height = getInt(1))
 }

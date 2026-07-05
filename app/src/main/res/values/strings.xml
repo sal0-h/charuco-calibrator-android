@@ -51,7 +51,7 @@
     <string name="stereo_calibrate_title">Calibrate</string>
     <string name="stereo_calibrate_subtitle">Use fresh board captures from only the currently selected physical pair.</string>
     <string name="stereo_calibrating">Calibrating…</string>
-    <string name="stereo_clear_pair_captures">Clear this pair’s board captures</string>
+    <string name="stereo_clear_pair_captures">Clear this pair/resolution’s board captures</string>
     <string name="stereo_disparity_title">Disparity</string>
     <string name="stereo_disparity_subtitle">Compute a debug disparity image from the latest saved stereo pair.</string>
     <string name="stereo_computing">Computing…</string>

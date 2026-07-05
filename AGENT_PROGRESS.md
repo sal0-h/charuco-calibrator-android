@@ -22,6 +22,14 @@
 - Added left/right size validation, guaranteed native disparity/SGBM cleanup on failures, and explicit PNG compression checks.
 - Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes.
 
+## Stereo probe polish — iteration 4 (stream throughput and session integrity)
+
+- Streaming and probing now match timestamps from lightweight frame headers. Full YUV→NV21 conversion runs only after **Save stereo pair** or **Save board pair** requests the next synchronized frames.
+- Live Compose updates are capped at 10 Hz while internal probe counts/deltas continue updating per frame, preventing UI recomposition from throttling the camera image thread.
+- Board calibration sessions are keyed by left/right physical IDs and exact resolution; mixed-resolution captures are excluded and the solver rejects mixed sessions defensively.
+- Cloud verification: forced clean `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon --rerun-tasks` passes (51/51 tasks executed).
+- S23 Ultra retest: confirm probe FPS/delta update without stalls, then save a stereo pair and 10 board pairs at one displayed resolution before calibrating.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.

@@ -39,6 +39,30 @@ class StereoCalibrationEngine {
                 statusMessage = "OpenCV is not initialized"
             )
         }
+        val resolution = pairs.first().leftResolution
+            ?: return StereoCalibrationResult(
+                success = false,
+                statusMessage = "Calibration pair resolution metadata is missing"
+            )
+        val sessionKey = StereoCalibrationSessionKey(
+            leftPhysicalCameraId = leftPhysicalCameraId,
+            rightPhysicalCameraId = rightPhysicalCameraId,
+            resolution = resolution
+        )
+        if (pairs.any { pair ->
+                !sessionKey.matches(
+                    leftPhysicalCameraId = pair.leftPhysicalCameraId,
+                    rightPhysicalCameraId = pair.rightPhysicalCameraId,
+                    leftResolution = pair.leftResolution,
+                    rightResolution = pair.rightResolution
+                )
+            }
+        ) {
+            return StereoCalibrationResult(
+                success = false,
+                statusMessage = "Calibration pairs mix camera IDs or image resolutions"
+            )
+        }
 
         return OpenCvInitializer.withLock {
             val correspondences = pairs.mapNotNull(StereoCorrespondenceMatcher::matchPair)

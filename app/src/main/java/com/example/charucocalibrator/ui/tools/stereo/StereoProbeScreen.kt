@@ -47,8 +47,10 @@ import com.example.charucocalibrator.R
 import com.example.charucocalibrator.stereo.EnumerationResult
 import com.example.charucocalibrator.stereo.StereoBoardPairStore
 import com.example.charucocalibrator.stereo.StereoCalibrationEngine
+import com.example.charucocalibrator.stereo.StereoCalibrationSessionKey
 import com.example.charucocalibrator.stereo.StereoDisparityEngine
 import com.example.charucocalibrator.stereo.StereoDualStreamController
+import com.example.charucocalibrator.stereo.StereoFrameSnapshot
 import com.example.charucocalibrator.stereo.StereoLiveState
 import com.example.charucocalibrator.stereo.StereoPairChoice
 import com.example.charucocalibrator.stereo.StereoPairExporter
@@ -169,6 +171,15 @@ private fun StereoProbeContent(
     val selectedResolution = selectedChoice?.let {
         StereoPairSelection.streamResolution(it, probeResults)
     }
+    val selectedCalibrationSession = selectedChoice?.let { choice ->
+        selectedResolution?.let { resolution ->
+            StereoCalibrationSessionKey(
+                leftPhysicalCameraId = choice.left.physicalCameraId,
+                rightPhysicalCameraId = choice.right.physicalCameraId,
+                resolution = resolution
+            )
+        }
+    }
 
     LaunchedEffect(pairChoices) {
         if (selectedPairKey !in pairChoices.map { it.key }) {
@@ -176,15 +187,12 @@ private fun StereoProbeContent(
         }
     }
 
-    LaunchedEffect(selectedChoice?.key) {
+    LaunchedEffect(selectedCalibrationSession) {
         calibrationResult = null
         latestPairDirectory = null
-        calibrationPairCount = selectedChoice?.let { choice ->
+        calibrationPairCount = selectedCalibrationSession?.let { sessionKey ->
             withContext(Dispatchers.IO) {
-                boardPairStore.count(
-                    choice.left.physicalCameraId,
-                    choice.right.physicalCameraId
-                )
+                boardPairStore.count(sessionKey)
             }
         } ?: 0
     }
@@ -316,6 +324,108 @@ private fun StereoProbeContent(
         }
     }
 
+    fun requestSynchronizedPair(
+        onPair: (StereoFrameSnapshot, StereoFrameSnapshot) -> Unit
+    ) {
+        if (captureBusy) return
+        captureBusy = true
+        statusMessage = "Capturing the next synchronized left/right frame pair…"
+        statusIsError = false
+        val accepted = controller.captureNextPair { result ->
+            result.fold(
+                onSuccess = { pair -> onPair(pair.first, pair.second) },
+                onFailure = { error ->
+                    captureBusy = false
+                    statusMessage = error.message ?: "Failed to capture a synchronized frame pair."
+                    statusIsError = true
+                }
+            )
+        }
+        if (!accepted) {
+            captureBusy = false
+            statusMessage = "Stereo streams are not ready for capture."
+            statusIsError = true
+        }
+    }
+
+    fun saveStereoPair() {
+        val logicalCameraId = enumeration?.logicalCameraId ?: "0"
+        val leftPhysicalCameraId = liveState.leftPhysicalId
+        val rightPhysicalCameraId = liveState.rightPhysicalId
+        val pairLabel = liveState.pairLabel
+        val oisDisabled = liveState.oisDisabled
+        val afPolicy = liveState.afPolicy
+        if (leftPhysicalCameraId == null || rightPhysicalCameraId == null || pairLabel == null) {
+            statusMessage = "Physical camera stream metadata is unavailable."
+            statusIsError = true
+            return
+        }
+        requestSynchronizedPair { left, right ->
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    StereoPairExporter.export(
+                        context = context,
+                        leftFrame = left,
+                        rightFrame = right,
+                        logicalCameraId = logicalCameraId,
+                        leftPhysicalCameraId = leftPhysicalCameraId,
+                        rightPhysicalCameraId = rightPhysicalCameraId,
+                        pairLabel = pairLabel,
+                        oisDisabled = oisDisabled,
+                        afPolicy = afPolicy
+                    )
+                }
+                captureBusy = false
+                result.fold(
+                    onSuccess = { export ->
+                        latestPairDirectory = export.directory
+                        statusMessage = "Stereo pair saved: ${export.directory.absolutePath}"
+                        statusIsError = false
+                    },
+                    onFailure = { error ->
+                        statusMessage = error.message ?: "Failed to save the stereo pair."
+                        statusIsError = true
+                    }
+                )
+            }
+        }
+    }
+
+    fun saveBoardPair() {
+        val sessionKey = selectedCalibrationSession
+        if (sessionKey == null ||
+            liveState.leftPhysicalId != sessionKey.leftPhysicalCameraId ||
+            liveState.rightPhysicalId != sessionKey.rightPhysicalCameraId
+        ) {
+            statusMessage = "The active stream does not match the selected calibration session."
+            statusIsError = true
+            return
+        }
+        requestSynchronizedPair { left, right ->
+            scope.launch {
+                val (result, savedPairCount) = withContext(Dispatchers.IO) {
+                    val saveResult = boardPairStore.savePair(left, right, sessionKey)
+                    saveResult to saveResult.getOrNull()?.let {
+                        runCatching { boardPairStore.count(sessionKey) }.getOrNull()
+                    }
+                }
+                captureBusy = false
+                result.fold(
+                    onSuccess = { record ->
+                        calibrationPairCount = savedPairCount ?: calibrationPairCount
+                        statusMessage = "Board pair ${record.index} saved: " +
+                            "left ${record.leftCornerCount}, right ${record.rightCornerCount} corners."
+                        statusIsError = false
+                    },
+                    onFailure = { error ->
+                        statusMessage = error.message ?: "Board pair rejected."
+                        statusIsError = true
+                    }
+                )
+            }
+        }
+    }
+
     val displayState = if (probing) StereoStreamState.PROBING else liveState.streamState
     val streamBusy = displayState == StereoStreamState.OPENING ||
         displayState == StereoStreamState.STREAMING ||
@@ -410,71 +520,8 @@ private fun StereoProbeContent(
                 matchedPairReady = matchedPairReady,
                 calibrationPairCount = calibrationPairCount,
                 busy = captureBusy,
-                onSaveStereoPair = {
-                    val (left, right) = controller.getLatestFrames()
-                    if (left == null || right == null) {
-                        statusMessage = "No synchronized frame pair is available yet."
-                        statusIsError = true
-                    } else {
-                        captureBusy = true
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                StereoPairExporter.export(
-                                    context = context,
-                                    leftFrame = left,
-                                    rightFrame = right,
-                                    logicalCameraId = enumeration?.logicalCameraId ?: "0",
-                                    leftPhysicalCameraId = liveState.leftPhysicalId.orEmpty(),
-                                    rightPhysicalCameraId = liveState.rightPhysicalId.orEmpty(),
-                                    pairLabel = liveState.pairLabel ?: "unknown",
-                                    oisDisabled = liveState.oisDisabled,
-                                    afPolicy = liveState.afPolicy
-                                )
-                            }
-                            captureBusy = false
-                            result.fold(
-                                onSuccess = { export ->
-                                    latestPairDirectory = export.directory
-                                    statusMessage = "Stereo pair saved: ${export.directory.absolutePath}"
-                                    statusIsError = false
-                                },
-                                onFailure = { error ->
-                                    statusMessage = error.message ?: "Failed to save the stereo pair."
-                                    statusIsError = true
-                                }
-                            )
-                        }
-                    }
-                },
-                onSaveBoardPair = {
-                    val (left, right) = controller.getLatestFrames()
-                    val leftId = liveState.leftPhysicalId
-                    val rightId = liveState.rightPhysicalId
-                    if (left == null || right == null || leftId == null || rightId == null) {
-                        statusMessage = "No synchronized frame pair is available for board detection."
-                        statusIsError = true
-                    } else {
-                        captureBusy = true
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                boardPairStore.savePair(left, right, leftId, rightId)
-                            }
-                            captureBusy = false
-                            result.fold(
-                                onSuccess = { record ->
-                                    calibrationPairCount = boardPairStore.count(leftId, rightId)
-                                    statusMessage = "Board pair ${record.index} saved: " +
-                                        "left ${record.leftCornerCount}, right ${record.rightCornerCount} corners."
-                                    statusIsError = false
-                                },
-                                onFailure = { error ->
-                                    statusMessage = error.message ?: "Board pair rejected."
-                                    statusIsError = true
-                                }
-                            )
-                        }
-                    }
-                },
+                onSaveStereoPair = ::saveStereoPair,
+                onSaveBoardPair = ::saveBoardPair,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
@@ -484,56 +531,57 @@ private fun StereoProbeContent(
                 result = calibrationResult,
                 busy = calibrationBusy,
                 onCalibrate = {
-                    val choice = selectedChoice
-                    if (choice == null) {
-                        statusMessage = "Select the physical pair to calibrate."
+                    val sessionKey = selectedCalibrationSession
+                    if (sessionKey == null) {
+                        statusMessage = "Select the physical pair and resolution to calibrate."
                         statusIsError = true
                     } else {
+                        val logicalCameraId = enumeration?.logicalCameraId ?: "0"
                         calibrationBusy = true
                         scope.launch {
-                            val pairs = withContext(Dispatchers.IO) {
-                                boardPairStore.listPairs(
-                                    choice.left.physicalCameraId,
-                                    choice.right.physicalCameraId
-                                )
-                            }
-                            val result = withContext(Dispatchers.Default) {
-                                calibrationEngine.calibrate(
-                                    pairs = pairs,
-                                    leftPhysicalCameraId = choice.left.physicalCameraId,
-                                    rightPhysicalCameraId = choice.right.physicalCameraId,
-                                    logicalCameraId = enumeration?.logicalCameraId ?: "0"
-                                )
-                            }
-                            calibrationResult = result
-                            if (result.success) {
-                                withContext(Dispatchers.IO) {
-                                    calibrationEngine.exportResult(context, result)
+                            try {
+                                val pairs = withContext(Dispatchers.IO) {
+                                    boardPairStore.listPairs(sessionKey)
                                 }
-                                statusMessage = "Stereo calibration exported: RMS " +
-                                    "${"%.4f".format(result.stereoRms)}, baseline " +
-                                    "${"%.4f".format(result.baselineM)} m."
-                                statusIsError = false
-                            } else {
-                                statusMessage = result.statusMessage
+                                val result = withContext(Dispatchers.Default) {
+                                    calibrationEngine.calibrate(
+                                        pairs = pairs,
+                                        leftPhysicalCameraId = sessionKey.leftPhysicalCameraId,
+                                        rightPhysicalCameraId = sessionKey.rightPhysicalCameraId,
+                                        logicalCameraId = logicalCameraId
+                                    )
+                                }
+                                calibrationResult = result
+                                if (result.success) {
+                                    withContext(Dispatchers.IO) {
+                                        calibrationEngine.exportResult(context, result)
+                                    }
+                                    statusMessage = "Stereo calibration exported: RMS " +
+                                        "${"%.4f".format(result.stereoRms)}, baseline " +
+                                        "${"%.4f".format(result.baselineM)} m."
+                                    statusIsError = false
+                                } else {
+                                    statusMessage = result.statusMessage
+                                    statusIsError = true
+                                }
+                            } catch (error: Exception) {
+                                statusMessage = error.message ?: "Stereo calibration failed."
                                 statusIsError = true
+                            } finally {
+                                calibrationBusy = false
                             }
-                            calibrationBusy = false
                         }
                     }
                 },
                 onClear = {
-                    selectedChoice?.let { choice ->
+                    selectedCalibrationSession?.let { sessionKey ->
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                boardPairStore.clear(
-                                    choice.left.physicalCameraId,
-                                    choice.right.physicalCameraId
-                                )
+                                boardPairStore.clear(sessionKey)
                             }
                             calibrationPairCount = 0
                             calibrationResult = null
-                            statusMessage = "Board captures cleared for ${choice.label}."
+                            statusMessage = "Board captures cleared for the selected pair and resolution."
                             statusIsError = false
                         }
                     }
