@@ -35,10 +35,17 @@ object StereoPairSelection {
 
     fun streamResolution(
         choice: StereoPairChoice,
-        results: List<StereoPairProbeResult>
+        results: List<StereoPairProbeResult>,
+        cachedWorkingConfig: StereoWorkingConfig? = null
     ): Dimensions? = resultFor(choice, results)
         ?.takeIf { it.success }
         ?.resolution
+        ?: cachedWorkingConfig
+            ?.takeIf { it.pairKey == choice.key }
+            ?.resolution
+            ?.takeIf { resolution ->
+                resolution in choice.left.yuvSizes && resolution in choice.right.yuvSizes
+            }
         ?: StereoResolutionSelector.resolutionCandidates(
             choice.left.yuvSizes,
             choice.right.yuvSizes

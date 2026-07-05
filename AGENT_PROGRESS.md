@@ -36,6 +36,13 @@
 - Other devices use conservative focal-length bands and no longer invent a tele label merely because one duplicate wide focal length is numerically largest.
 - Physical retest: confirm Setup displays `2 ultrawide`, `5 wide`, `6 wide`, and `7 tele`; both `2+5` and `2+6` should remain top probe candidates.
 
+## Stereo probe polish — iteration 6 (last working configuration)
+
+- A probe PASS or a manually started stream that produces matched frames now caches its physical IDs and exact resolution in app preferences.
+- The next tool launch restores that supported pair/resolution, marks it **LAST WORKING**, and still allows a fresh probe or any manual pair selection.
+- Stale cache entries are discarded when the physical IDs or shared YUV size are no longer exposed.
+- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.

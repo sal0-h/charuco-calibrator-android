@@ -36,6 +36,7 @@
     <string name="stereo_select_subtitle">Probe results inform the choice but never block a manual stream attempt.</string>
     <string name="stereo_select_waiting">Pair choices appear after camera enumeration.</string>
     <string name="stereo_select_locked">Stop the stream or probe before changing the pair.</string>
+    <string name="stereo_last_working">LAST WORKING</string>
     <string name="stereo_stream_title">Stream</string>
     <string name="stereo_stream_subtitle">Open both physical outputs and verify synchronized timestamps.</string>
     <string name="stereo_timestamp_delta_label">timestamp_delta_ns</string>

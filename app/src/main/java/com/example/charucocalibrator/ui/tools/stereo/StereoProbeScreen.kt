@@ -60,6 +60,8 @@ import com.example.charucocalibrator.stereo.StereoPhysicalCameraEnumerator
 import com.example.charucocalibrator.stereo.StereoProbeProgress
 import com.example.charucocalibrator.stereo.StereoProbeReportExporter
 import com.example.charucocalibrator.stereo.StereoStreamState
+import com.example.charucocalibrator.stereo.StereoWorkingConfig
+import com.example.charucocalibrator.stereo.StereoWorkingConfigStore
 import com.example.charucocalibrator.stereo.model.StereoCalibrationResult
 import com.example.charucocalibrator.stereo.model.StereoPairProbeResult
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +103,7 @@ private fun StereoProbeContent(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val workingConfigStore = remember { StereoWorkingConfigStore(context) }
 
     var enumeration by remember { mutableStateOf<EnumerationResult?>(null) }
     var liveState by remember { mutableStateOf(StereoLiveState()) }
@@ -118,6 +121,9 @@ private fun StereoProbeContent(
     var calibrationPairCount by remember { mutableIntStateOf(0) }
     var calibrationResult by remember { mutableStateOf<StereoCalibrationResult?>(null) }
     var latestPairDirectory by remember { mutableStateOf<File?>(null) }
+    var cachedWorkingConfig by remember {
+        mutableStateOf(workingConfigStore.load())
+    }
 
     val boardPairStore = remember { StereoBoardPairStore(context) }
     val calibrationEngine = remember { StereoCalibrationEngine() }
@@ -129,6 +135,20 @@ private fun StereoProbeContent(
     val controller = remember {
         StereoDualStreamController(context) { state ->
             liveState = state
+            if (state.timestampDeltaNs != null &&
+                state.leftFrameCount > 0L && state.rightFrameCount > 0L
+            ) {
+                val leftId = state.leftPhysicalId
+                val rightId = state.rightPhysicalId
+                val resolution = state.resolution
+                if (leftId != null && rightId != null && resolution != null) {
+                    val workingConfig = StereoWorkingConfig(leftId, rightId, resolution)
+                    if (cachedWorkingConfig != workingConfig) {
+                        workingConfigStore.save(workingConfig)
+                        cachedWorkingConfig = workingConfig
+                    }
+                }
+            }
             when (state.streamState) {
                 StereoStreamState.STREAMING -> {
                     statusMessage = "Streams are active. Confirm the timestamp delta, then capture."
@@ -167,9 +187,12 @@ private fun StereoProbeContent(
 
     val cameras = enumeration?.cameras.orEmpty()
     val pairChoices = remember(cameras) { StereoPairSelection.choices(cameras) }
+    val supportedCachedConfig = remember(cameras, cachedWorkingConfig) {
+        cachedWorkingConfig?.takeIf { it.isSupportedBy(cameras) }
+    }
     val selectedChoice = pairChoices.firstOrNull { it.key == selectedPairKey }
     val selectedResolution = selectedChoice?.let {
-        StereoPairSelection.streamResolution(it, probeResults)
+        StereoPairSelection.streamResolution(it, probeResults, supportedCachedConfig)
     }
     val selectedCalibrationSession = selectedChoice?.let { choice ->
         selectedResolution?.let { resolution ->
@@ -181,9 +204,22 @@ private fun StereoProbeContent(
         }
     }
 
-    LaunchedEffect(pairChoices) {
+    LaunchedEffect(pairChoices, supportedCachedConfig) {
         if (selectedPairKey !in pairChoices.map { it.key }) {
-            selectedPairKey = pairChoices.firstOrNull()?.key
+            selectedPairKey = supportedCachedConfig?.pairKey
+                ?.takeIf { cachedKey -> pairChoices.any { it.key == cachedKey } }
+                ?: pairChoices.firstOrNull()?.key
+            if (supportedCachedConfig != null && statusMessage == null) {
+                statusMessage = "Restored the last working physical pair and resolution."
+                statusIsError = false
+            }
+        }
+    }
+
+    LaunchedEffect(cameras, cachedWorkingConfig, supportedCachedConfig) {
+        if (cameras.isNotEmpty() && cachedWorkingConfig != null && supportedCachedConfig == null) {
+            workingConfigStore.clear()
+            cachedWorkingConfig = null
         }
     }
 
@@ -272,6 +308,15 @@ private fun StereoProbeContent(
 
             val firstWorking = results.firstOrNull { it.success }
             if (firstWorking != null) {
+                firstWorking.resolution?.let { resolution ->
+                    val workingConfig = StereoWorkingConfig(
+                        leftPhysicalCameraId = firstWorking.leftPhysicalCameraId,
+                        rightPhysicalCameraId = firstWorking.rightPhysicalCameraId,
+                        resolution = resolution
+                    )
+                    workingConfigStore.save(workingConfig)
+                    cachedWorkingConfig = workingConfig
+                }
                 pairChoices.firstOrNull { choice ->
                     choice.left.physicalCameraId == firstWorking.leftPhysicalCameraId &&
                         choice.right.physicalCameraId == firstWorking.rightPhysicalCameraId
@@ -487,6 +532,7 @@ private fun StereoProbeContent(
                 choices = pairChoices,
                 selectedKey = selectedPairKey,
                 probeResults = probeResults,
+                cachedWorkingConfig = supportedCachedConfig,
                 selectionEnabled = !streamBusy,
                 onSelect = ::selectPair,
                 modifier = Modifier.padding(bottom = 12.dp)

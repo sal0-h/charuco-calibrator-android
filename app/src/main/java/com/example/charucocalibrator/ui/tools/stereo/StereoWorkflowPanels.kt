@@ -34,6 +34,7 @@ import com.example.charucocalibrator.stereo.StereoPairChoice
 import com.example.charucocalibrator.stereo.StereoPairSelection
 import com.example.charucocalibrator.stereo.StereoProbeProgress
 import com.example.charucocalibrator.stereo.StereoStreamState
+import com.example.charucocalibrator.stereo.StereoWorkingConfig
 import com.example.charucocalibrator.stereo.model.StereoCalibrationResult
 import com.example.charucocalibrator.stereo.model.StereoPairProbeResult
 import com.example.charucocalibrator.stereo.model.StereoPhysicalCameraInfo
@@ -150,6 +151,7 @@ fun StereoPairSelectionPanel(
     choices: List<StereoPairChoice>,
     selectedKey: String?,
     probeResults: List<StereoPairProbeResult>,
+    cachedWorkingConfig: StereoWorkingConfig?,
     selectionEnabled: Boolean,
     onSelect: (StereoPairChoice) -> Unit,
     modifier: Modifier = Modifier
@@ -165,10 +167,12 @@ fun StereoPairSelectionPanel(
         }
         choices.forEach { choice ->
             val result = StereoPairSelection.resultFor(choice, probeResults)
+            val cachedForChoice = cachedWorkingConfig?.takeIf { it.pairKey == choice.key }
             val status = when {
-                result == null -> "NOT TESTED"
-                result.success -> "PASS"
-                else -> "FAIL"
+                result?.success == true -> "PASS"
+                result != null -> "FAIL"
+                cachedForChoice != null -> stringResource(R.string.stereo_last_working)
+                else -> "NOT TESTED"
             }
             FilterChip(
                 selected = selectedKey == choice.key,
@@ -186,7 +190,9 @@ fun StereoPairSelectionPanel(
                         Text(
                             buildString {
                                 append(status)
-                                result?.resolution?.let { append("  ${it.width}×${it.height}") }
+                                (result?.resolution ?: cachedForChoice?.resolution)?.let {
+                                    append("  ${it.width}×${it.height}")
+                                }
                                 result?.medianTimestampDeltaNs?.let { append("  Δ ${formatDelta(it)}") }
                             },
                             style = MaterialTheme.typography.bodySmall
