@@ -11,6 +11,14 @@ import com.example.charucocalibrator.stereo.model.StereoPhysicalCameraInfo
 
 object StereoPhysicalCameraEnumerator {
     private const val LOGICAL_MULTI_CAMERA = 11
+    private const val ULTRAWIDE_MAX_FOCAL_LENGTH_MM = 3.5f
+    private const val TELE_MIN_FOCAL_LENGTH_MM = 7.0f
+    private val S23_ULTRA_PHYSICAL_ID_HINTS = mapOf(
+        "2" to LensType.ULTRAWIDE,
+        "5" to LensType.WIDE,
+        "6" to LensType.WIDE,
+        "7" to LensType.TELE
+    )
 
     fun enumerate(context: Context, logicalCameraId: String = DEFAULT_CAMERA_ID): EnumerationResult {
         val cameraManager = context.getSystemService(CameraManager::class.java)
@@ -125,22 +133,20 @@ object StereoPhysicalCameraEnumerator {
         cameras: List<StereoPhysicalCameraInfo>
     ): List<StereoPhysicalCameraInfo> {
         if (cameras.isEmpty()) return emptyList()
-        val sorted = cameras.sortedBy { it.focalLengthMm }
-        return when (sorted.size) {
-            1 -> listOf(sorted.first().copy(lensType = LensType.WIDE))
-            2 -> listOf(
-                sorted[0].copy(lensType = LensType.ULTRAWIDE),
-                sorted[1].copy(lensType = LensType.WIDE)
-            )
-            else -> {
-                val ultrawide = sorted.first().copy(lensType = LensType.ULTRAWIDE)
-                val tele = sorted.last().copy(lensType = LensType.TELE)
-                val middle = sorted.drop(1).dropLast(1).map { camera ->
-                    camera.copy(lensType = LensType.WIDE)
-                }
-                listOf(ultrawide) + middle + listOf(tele)
-            }
+        val physicalIds = cameras.map { it.physicalCameraId }.toSet()
+        val useS23UltraHints = physicalIds.containsAll(S23_ULTRA_PHYSICAL_ID_HINTS.keys)
+        return cameras.map { camera ->
+            val hintedType = S23_ULTRA_PHYSICAL_ID_HINTS[camera.physicalCameraId]
+                .takeIf { useS23UltraHints }
+            camera.copy(lensType = hintedType ?: classifyFocalLength(camera.focalLengthMm))
         }
+    }
+
+    private fun classifyFocalLength(focalLengthMm: Float): LensType = when {
+        focalLengthMm <= 0f -> LensType.UNKNOWN
+        focalLengthMm <= ULTRAWIDE_MAX_FOCAL_LENGTH_MM -> LensType.ULTRAWIDE
+        focalLengthMm >= TELE_MIN_FOCAL_LENGTH_MM -> LensType.TELE
+        else -> LensType.WIDE
     }
 
     private fun resolvePhysicalCharacteristics(

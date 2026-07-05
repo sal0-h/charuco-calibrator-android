@@ -30,6 +30,12 @@
 - Cloud verification: forced clean `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon --rerun-tasks` passes (51/51 tasks executed).
 - S23 Ultra retest: confirm probe FPS/delta update without stalls, then save a stereo pair and 10 board pairs at one displayed resolution before calibrating.
 
+## Stereo probe polish — iteration 5 (S23 lens identity)
+
+- The observed S23 Ultra physical-ID signature now maps IDs `2/5/6/7` to ultrawide/wide/wide/tele explicitly, so duplicate or fallback `6.3–6.4 mm` metadata cannot relabel ID 6 as tele.
+- Other devices use conservative focal-length bands and no longer invent a tele label merely because one duplicate wide focal length is numerically largest.
+- Physical retest: confirm Setup displays `2 ultrawide`, `5 wide`, `6 wide`, and `7 tele`; both `2+5` and `2+6` should remain top probe candidates.
+
 ## Calibration contract
 
 - Device target: Samsung Galaxy S23 Ultra.
