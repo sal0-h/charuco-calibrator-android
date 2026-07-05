@@ -17,6 +17,8 @@
     <string name="stereo_stop_streams">Stop streams</string>
     <string name="stereo_save_pair">Save stereo pair</string>
     <string name="stereo_export_probe_report">Export probe report</string>
+    <string name="stereo_export_support_bundle">Export support bundle</string>
+    <string name="stereo_exporting_support_bundle">Exporting support bundle…</string>
     <string name="stereo_calibrate">Calibrate stereo</string>
     <string name="stereo_compute_disparity">Compute disparity</string>
     <string name="stereo_run_probe">Run pair probe</string>

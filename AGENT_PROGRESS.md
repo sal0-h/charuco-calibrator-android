@@ -1,5 +1,17 @@
 # Agent progress
 
+## Stereo probe polish — iteration 7 (pullable device diagnostics)
+
+- Every stereo-tool session now writes structured JSONL diagnostics with camera enumeration,
+  probe attempts/results, stream state and sampled telemetry, capture timestamps, board acceptance,
+  calibration, disparity, lifecycle, and errors.
+- **Export support bundle** creates `stereo_support_bundle_latest.zip` containing the session log,
+  camera/probe/calibration reports, latest stereo-pair metadata, up to 50 board-corner records, and
+  the latest disparity JSON. Captured JPEG/PNG data is deliberately excluded to keep the bundle
+  small enough to pull and inspect quickly.
+- Stable adb paths: `stereo_diagnostics/stereo_session_latest.jsonl` and
+  `stereo_support_bundle_latest.zip` under the app-specific external files directory.
+
 ## Stereo probe polish — iteration 1 (stream/probe lifecycle)
 
 - Probe attempts now use one controller, wait for actual `STREAMING`, close camera resources before the next attempt, expose pair/resolution progress, and support cancellation.

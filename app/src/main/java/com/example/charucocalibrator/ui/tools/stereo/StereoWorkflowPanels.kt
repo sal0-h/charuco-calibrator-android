@@ -69,9 +69,11 @@ fun StereoSetupPanel(
     progress: StereoProbeProgress?,
     canRunProbe: Boolean,
     canExportReport: Boolean,
+    supportBundleBusy: Boolean,
     onRunProbe: () -> Unit,
     onCancelProbe: () -> Unit,
     onExportReport: () -> Unit,
+    onExportSupportBundle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     StereoStepCard(
@@ -142,6 +144,23 @@ fun StereoSetupPanel(
                 .padding(top = 8.dp)
         ) {
             Text(stringResource(R.string.stereo_export_probe_report))
+        }
+        OutlinedButton(
+            onClick = onExportSupportBundle,
+            enabled = !supportBundleBusy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+        ) {
+            Text(
+                stringResource(
+                    if (supportBundleBusy) {
+                        R.string.stereo_exporting_support_bundle
+                    } else {
+                        R.string.stereo_export_support_bundle
+                    }
+                )
+            )
         }
     }
 }
