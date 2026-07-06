@@ -1,15 +1,12 @@
 package com.example.charucocalibrator
 
-import kotlin.math.abs
-import kotlin.math.hypot
-
 data class AcceptanceDecision(
     val accepted: Boolean,
     val message: String
 )
 
 class FrameAcceptanceController {
-    private val recentAccepted = ArrayDeque<AcceptedFrameProxy>()
+    private val acceptedPoses = mutableListOf<BoardPoseFingerprint>()
     private val poseCoverage = PoseCoverageTracker()
     private var lastAcceptedAtMs = 0L
 
@@ -71,7 +68,7 @@ class FrameAcceptanceController {
             return AcceptanceDecision(false, lastDecisionMessage!!)
         }
 
-        val proxy = AcceptedFrameProxy(
+        val fingerprint = BoardPoseFingerprint(
             centerXRatio = bbox.centerX / frameWidth,
             centerYRatio = bbox.centerY / frameHeight,
             areaRatio = bbox.areaRatio,
@@ -79,41 +76,28 @@ class FrameAcceptanceController {
             cornerCount = detection.charucoCornerCount
         )
 
-        if (!poseCoverage.shouldAccept(proxy.centerXRatio, proxy.centerYRatio)) {
+        if (!poseCoverage.shouldAccept(fingerprint.centerXRatio, fingerprint.centerYRatio)) {
             lastDecisionMessage = "rejected: pose_grid_already_covered"
             return AcceptanceDecision(false, lastDecisionMessage!!)
         }
 
-        recentAccepted.forEach { previous ->
-            val centerDistance = hypot(
-                proxy.centerXRatio - previous.centerXRatio,
-                proxy.centerYRatio - previous.centerYRatio
-            )
-            val areaDelta = abs(proxy.areaRatio - previous.areaRatio)
-            val aspectDelta = abs(proxy.aspectRatio - previous.aspectRatio)
-            if (
-                centerDistance < AcceptanceConfig.MIN_CENTER_DISTANCE_RATIO &&
-                areaDelta < AcceptanceConfig.MIN_AREA_RATIO_DELTA &&
-                aspectDelta < AcceptanceConfig.MIN_ASPECT_DELTA
-            ) {
-                lastDecisionMessage = "rejected: too_similar_to_recent_frame"
+        acceptedPoses.forEach { previous ->
+            if (PoseSimilarity.isTooSimilar(fingerprint, previous)) {
+                lastDecisionMessage = "rejected: too_similar_to_accepted_pose"
                 return AcceptanceDecision(false, lastDecisionMessage!!)
             }
         }
 
         lastAcceptedAtMs = now
-        recentAccepted.addLast(proxy)
-        poseCoverage.recordAccept(proxy.centerXRatio, proxy.centerYRatio)
-        while (recentAccepted.size > 8) {
-            recentAccepted.removeFirst()
-        }
+        acceptedPoses += fingerprint
+        poseCoverage.recordAccept(fingerprint.centerXRatio, fingerprint.centerYRatio)
         lastDecisionMessage =
             "accepted: corners=${detection.charucoCornerCount}, sharpness=${"%.1f".format(sharpness)}, coverage=${"%.3f".format(bbox.areaRatio)}"
         return AcceptanceDecision(true, lastDecisionMessage!!)
     }
 
     fun clearHistory() {
-        recentAccepted.clear()
+        acceptedPoses.clear()
         poseCoverage.clear()
         lastAcceptedAtMs = 0L
         lastDecisionMessage = null
@@ -123,14 +107,6 @@ class FrameAcceptanceController {
         lastDecisionMessage = "auto_capture_started"
     }
 }
-
-private data class AcceptedFrameProxy(
-    val centerXRatio: Double,
-    val centerYRatio: Double,
-    val areaRatio: Double,
-    val aspectRatio: Double,
-    val cornerCount: Int
-)
 
 private val DetectionBoundingBox.centerX: Double
     get() = (left + right) / 2.0
