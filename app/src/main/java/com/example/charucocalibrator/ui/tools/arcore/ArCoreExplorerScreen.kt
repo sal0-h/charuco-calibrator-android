@@ -4,7 +4,11 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.opengl.GLSurfaceView
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
 import android.view.Display
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,10 +33,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,18 +57,21 @@ import com.example.charucocalibrator.R
 import com.example.charucocalibrator.arcore.ArCoreAvailabilityStatus
 import com.example.charucocalibrator.arcore.ArCoreCapabilityChecker
 import com.example.charucocalibrator.arcore.ArCoreInstallResult
-import com.example.charucocalibrator.arcore.ArCorePreviewRenderer
+import com.example.charucocalibrator.arcore.ArCoreOverlayEvidence
 import com.example.charucocalibrator.arcore.ArCoreSessionController
+import com.example.charucocalibrator.arcore.ArCorePreviewRenderer
 import com.example.charucocalibrator.arcore.ArCoreSnapshotExporter
 import com.example.charucocalibrator.arcore.ArCoreSnapshotResult
 import com.example.charucocalibrator.arcore.ArCoreSnapshotShare
 import com.example.charucocalibrator.arcore.model.ArCoreFrameState
+import com.example.charucocalibrator.arcore.model.DepthImageData
 import com.example.charucocalibrator.arcore.model.DepthOverlayMode
 import com.example.charucocalibrator.arcore.model.DepthSourceToggle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 @Composable
 fun ArCoreExplorerScreen(
@@ -86,9 +94,10 @@ fun ArCoreExplorerScreen(
     var installMessage by remember { mutableStateOf<String?>(null) }
     var sessionError by remember { mutableStateOf<String?>(null) }
     var frameState by remember { mutableStateOf(ArCoreFrameState()) }
-    var overlayMode by remember { mutableStateOf(DepthOverlayMode.Off) }
+    var overlayMode by remember { mutableStateOf(DepthOverlayMode.RawDepthHeatmap) }
     var depthSource by remember { mutableStateOf(DepthSourceToggle.Smoothed) }
-    var experimentalOverlayEnabled by remember { mutableStateOf(false) }
+    var overlayOpacity by remember { mutableStateOf(ArCoreSessionController.DEFAULT_OVERLAY_OPACITY) }
+    var confidenceThreshold by remember { mutableStateOf(ArCoreSessionController.DEFAULT_CONFIDENCE_THRESHOLD) }
     var lastExport by remember { mutableStateOf<ArCoreSnapshotResult?>(null) }
     var exportInProgress by remember { mutableStateOf(false) }
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -102,12 +111,22 @@ fun ArCoreExplorerScreen(
         )
     }
     val renderer = remember(sessionController) { ArCorePreviewRenderer(sessionController) }
+    val display = context.defaultDisplay()
+
+    SideEffect {
+        sessionController.setDisplayRotation(display.rotation)
+        sessionController.setOverlaySettings(
+            overlayMode = overlayMode,
+            depthSource = depthSource,
+            opacity = overlayOpacity,
+            confidenceThreshold = confidenceThreshold,
+        )
+    }
 
     DisposableEffect(lifecycleOwner, hasCameraPermission, availability) {
         if (!hasCameraPermission || availability != ArCoreAvailabilityStatus.Supported) {
             return@DisposableEffect onDispose { }
         }
-        val display = context.defaultDisplay()
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> sessionController.resume(display)
@@ -119,7 +138,7 @@ fun ArCoreExplorerScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             sessionController.pause()
-            sessionController.close()
+            Thread { sessionController.close() }.start()
         }
     }
 
@@ -167,7 +186,7 @@ fun ArCoreExplorerScreen(
                 }
                 availability == ArCoreAvailabilityStatus.SupportedApkUpdateRequired -> {
                     InstallPrompt(
-                        message = "ARCore is not installed. Install Google Play Services for AR to continue.",
+                        message = "Google Play Services for AR is missing or too old. Install or update it to continue.",
                         onInstall = {
                             activity?.let { act ->
                                 when (val result = ArCoreCapabilityChecker.requestInstall(act)) {
@@ -202,12 +221,6 @@ fun ArCoreExplorerScreen(
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
 
-                    ArCoreStatusPanel(
-                        frameState = frameState,
-                        depthModeLabel = frameState.depthModeLabel,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -226,17 +239,30 @@ fun ArCoreExplorerScreen(
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
-                        if (experimentalOverlayEnabled && overlayMode != DepthOverlayMode.Off) {
-                            ArCoreDepthOverlay(
-                                frameState = frameState,
-                                overlayMode = overlayMode,
-                                depthSource = depthSource,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
                     }
 
+                    ArCoreOverlayControlSection(
+                        overlayMode = overlayMode,
+                        depthSource = depthSource,
+                        rawAvailable = frameState.rawDepth != null,
+                        smoothedAvailable = frameState.smoothedDepth != null,
+                        selectedDepth = selectedDepth(frameState, depthSource),
+                        overlayOpacity = overlayOpacity,
+                        confidenceThreshold = confidenceThreshold,
+                        onOverlayModeChange = { overlayMode = it },
+                        onDepthSourceChange = { depthSource = it },
+                        onOpacityChange = { overlayOpacity = it },
+                        onConfidenceThresholdChange = { confidenceThreshold = it },
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                    ArCoreStatusPanel(
+                        frameState = frameState,
+                        depthModeLabel = frameState.depthModeLabel,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
 
                     ArCoreDiagnosticsPanel(
                         frameState = frameState,
@@ -252,22 +278,6 @@ fun ArCoreExplorerScreen(
                     DepthStatsPanel(frameState = frameState)
 
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    ExperimentalOverlaySection(
-                        enabled = experimentalOverlayEnabled,
-                        onEnabledChange = { enabled ->
-                            experimentalOverlayEnabled = enabled
-                            if (!enabled) {
-                                overlayMode = DepthOverlayMode.Off
-                            }
-                        },
-                        overlayMode = overlayMode,
-                        depthSource = depthSource,
-                        rawAvailable = frameState.rawDepth != null,
-                        smoothedAvailable = frameState.smoothedDepth != null,
-                        onOverlayModeChange = { overlayMode = it },
-                        onDepthSourceChange = { depthSource = it },
-                    )
 
                     ArCoreSnapshotPanel(
                         lastExport = lastExport,
@@ -287,6 +297,7 @@ fun ArCoreExplorerScreen(
                                 exportInProgress = true
                                 exportError = null
                                 try {
+                                    val previewBitmap = captureGlSurface(surfaceView)
                                     val snapshotState = suspendCancellableCoroutine { cont ->
                                         surfaceView.queueEvent {
                                             cont.resume(
@@ -294,8 +305,15 @@ fun ArCoreExplorerScreen(
                                             ) { }
                                         }
                                     }
+                                    val evidence = ArCoreOverlayEvidence(
+                                        previewBitmap = previewBitmap,
+                                        mode = overlayMode,
+                                        source = depthSource,
+                                        opacity = overlayOpacity,
+                                        confidenceThreshold = confidenceThreshold,
+                                    )
                                     val result = withContext(Dispatchers.IO) {
-                                        ArCoreSnapshotExporter.exportSnapshot(context, snapshotState)
+                                        ArCoreSnapshotExporter.exportSnapshot(context, snapshotState, evidence)
                                     }
                                     lastExport = result
                                     if (!result.rawDepthAvailable &&
@@ -357,79 +375,136 @@ private fun StatusMessage(message: String) {
 }
 
 @Composable
-private fun ExperimentalOverlaySection(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
+private fun ArCoreOverlayControlSection(
     overlayMode: DepthOverlayMode,
     depthSource: DepthSourceToggle,
     rawAvailable: Boolean,
     smoothedAvailable: Boolean,
+    selectedDepth: DepthImageData?,
+    overlayOpacity: Float,
+    confidenceThreshold: Int,
     onOverlayModeChange: (DepthOverlayMode) -> Unit,
     onDepthSourceChange: (DepthSourceToggle) -> Unit,
+    onOpacityChange: (Float) -> Unit,
+    onConfidenceThresholdChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.arcore_experimental_overlay_title),
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = stringResource(R.string.arcore_experimental_overlay_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
+        Text(
+            text = stringResource(R.string.arcore_overlay_title),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = stringResource(R.string.arcore_overlay_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            text = "Overlay mode",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Row(modifier = Modifier.padding(top = 8.dp)) {
+            DepthOverlayMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = overlayMode == mode,
+                    onClick = { onOverlayModeChange(mode) },
+                    label = { Text(mode.label()) },
+                    modifier = Modifier.padding(end = 8.dp),
                 )
             }
-            Switch(checked = enabled, onCheckedChange = onEnabledChange)
         }
-        if (enabled) {
+        Text(
+            text = "Depth read path (export always captures both when available)",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Row(modifier = Modifier.padding(top = 8.dp)) {
+            FilterChip(
+                selected = depthSource == DepthSourceToggle.Raw,
+                onClick = { onDepthSourceChange(DepthSourceToggle.Raw) },
+                enabled = rawAvailable,
+                label = { Text("Raw") },
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            FilterChip(
+                selected = depthSource == DepthSourceToggle.Smoothed,
+                onClick = { onDepthSourceChange(DepthSourceToggle.Smoothed) },
+                enabled = smoothedAvailable,
+                label = { Text("Smoothed") },
+            )
+        }
+        selectedDepth?.let { depth ->
             Text(
-                text = "Overlay mode",
-                style = MaterialTheme.typography.titleSmall,
+                text = "Color scale: ${"%.2f".format(depth.scaleLowM)}m → ${"%.2f".format(depth.scaleHighM)}m " +
+                    "(2–98% current frame)",
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 12.dp),
             )
-            Row(modifier = Modifier.padding(top = 8.dp)) {
-                DepthOverlayMode.entries.forEach { mode ->
-                    FilterChip(
-                        selected = overlayMode == mode,
-                        onClick = { onOverlayModeChange(mode) },
-                        label = { Text(mode.label()) },
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                }
-            }
+        }
+        Text(
+            text = "Opacity: ${"%.0f".format(overlayOpacity * 100f)}%",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Slider(
+            value = overlayOpacity,
+            onValueChange = onOpacityChange,
+            valueRange = 0.15f..0.85f,
+            steps = 13,
+        )
+        if (overlayMode == DepthOverlayMode.DepthMaskedByConfidence) {
             Text(
-                text = "Depth read path (export always captures both when available)",
+                text = "Confidence threshold: $confidenceThreshold / 255",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 8.dp),
             )
-            Row(modifier = Modifier.padding(top = 8.dp)) {
-                FilterChip(
-                    selected = depthSource == DepthSourceToggle.Raw,
-                    onClick = { onDepthSourceChange(DepthSourceToggle.Raw) },
-                    enabled = rawAvailable,
-                    label = { Text("Raw") },
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-                FilterChip(
-                    selected = depthSource == DepthSourceToggle.Smoothed,
-                    onClick = { onDepthSourceChange(DepthSourceToggle.Smoothed) },
-                    enabled = smoothedAvailable,
-                    label = { Text("Smoothed") },
-                )
-            }
+            Text(
+                text = "Mask uses ARCore raw-depth confidence. If Smoothed is selected, only the color depth source changes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Slider(
+                value = confidenceThreshold.toFloat(),
+                onValueChange = { onConfidenceThresholdChange(it.toInt().coerceIn(0, 255)) },
+                valueRange = 0f..255f,
+                steps = 16,
+            )
         }
     }
 }
+
+private suspend fun captureGlSurface(surfaceView: GLSurfaceView): Bitmap? =
+    suspendCancellableCoroutine { cont ->
+        val width = surfaceView.width
+        val height = surfaceView.height
+        if (width <= 0 || height <= 0) {
+            cont.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(
+            surfaceView,
+            bitmap,
+            { result ->
+                if (result == PixelCopy.SUCCESS) {
+                    cont.resume(bitmap)
+                } else {
+                    bitmap.recycle()
+                    cont.resume(null)
+                }
+            },
+            Handler(Looper.getMainLooper()),
+        )
+        cont.invokeOnCancellation { bitmap.recycle() }
+    }
 
 @Composable
 private fun DepthStatsPanel(frameState: ArCoreFrameState) {
@@ -493,6 +568,15 @@ private fun DepthOverlayMode.label(): String = when (this) {
     DepthOverlayMode.Confidence -> "Conf"
     DepthOverlayMode.DepthMaskedByConfidence -> "Masked"
 }
+
+private fun selectedDepth(
+    frameState: ArCoreFrameState,
+    depthSource: DepthSourceToggle,
+): DepthImageData? =
+    when (depthSource) {
+        DepthSourceToggle.Raw -> frameState.rawDepth
+        DepthSourceToggle.Smoothed -> frameState.smoothedDepth ?: frameState.rawDepth
+    }
 
 private fun Context.hasCameraPermission(): Boolean =
     ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==

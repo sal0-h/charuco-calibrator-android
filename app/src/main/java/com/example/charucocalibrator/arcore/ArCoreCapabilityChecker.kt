@@ -29,21 +29,23 @@ object ArCoreCapabilityChecker {
 
     fun checkAvailability(context: Context): ArCoreAvailabilityStatus {
         return try {
-            when (ArCoreApk.getInstance().checkAvailability(context)) {
-                ArCoreApk.Availability.SUPPORTED_INSTALLED,
-                ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD,
-                -> ArCoreAvailabilityStatus.Supported
-
-                ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED -> ArCoreAvailabilityStatus.SupportedApkUpdateRequired
-                ArCoreApk.Availability.UNSUPPORTED_DEVICE_NOT_CAPABLE ->
-                    ArCoreAvailabilityStatus.UnsupportedDevice
-
-                else -> ArCoreAvailabilityStatus.UnknownError
-            }
+            mapAvailability(ArCoreApk.getInstance().checkAvailability(context))
         } catch (_: Exception) {
             ArCoreAvailabilityStatus.UnknownError
         }
     }
+
+    internal fun mapAvailability(availability: ArCoreApk.Availability): ArCoreAvailabilityStatus =
+        when (availability) {
+            ArCoreApk.Availability.SUPPORTED_INSTALLED -> ArCoreAvailabilityStatus.Supported
+            ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD,
+            ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED -> ArCoreAvailabilityStatus.SupportedApkUpdateRequired
+
+            ArCoreApk.Availability.UNSUPPORTED_DEVICE_NOT_CAPABLE ->
+                ArCoreAvailabilityStatus.UnsupportedDevice
+
+            else -> ArCoreAvailabilityStatus.UnknownError
+        }
 
     fun requestInstall(activity: Activity): ArCoreInstallResult {
         return try {

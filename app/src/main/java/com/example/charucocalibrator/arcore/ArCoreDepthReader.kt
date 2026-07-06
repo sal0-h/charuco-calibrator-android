@@ -70,6 +70,7 @@ object ArCoreDepthReader {
         return ConfidenceImageData(
             width = width,
             height = height,
+            imageTimestampNs = image.timestamp,
             confidence = confidence,
             stats = ConfidenceStats(
                 width = width,
@@ -109,11 +110,15 @@ object ArCoreDepthReader {
             }
         }
         val stats = computeDepthStats(width, height, validDepthsMm)
+        val scale = DepthPercentileScale.fromDepthMm(depthMm)
         return DepthImageData(
             width = width,
             height = height,
+            imageTimestampNs = image.timestamp,
             depthMm = depthMm,
             stats = stats,
+            scaleLowM = scale.lowMm / 1000f,
+            scaleHighM = scale.highMm / 1000f,
         )
     }
 

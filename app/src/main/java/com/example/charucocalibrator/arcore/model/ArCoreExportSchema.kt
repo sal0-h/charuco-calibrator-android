@@ -1,6 +1,7 @@
 package com.example.charucocalibrator.arcore.model
 
 import org.json.JSONObject
+import org.json.JSONArray
 
 data class ExportIntrinsics(
     val fx: Float,
@@ -24,10 +25,14 @@ data class ExportDepthSection(
     val available: Boolean,
     val width: Int = 0,
     val height: Int = 0,
+    val imageTimestampNs: Long = 0L,
+    val matchesFrameTimestamp: Boolean = false,
     val validPixelFraction: Float = 0f,
     val minDepthM: Float = 0f,
     val medianDepthM: Float = 0f,
     val maxDepthM: Float = 0f,
+    val scaleLowM: Float = 0f,
+    val scaleHighM: Float = 0f,
     val binPath: String = "",
     val pngPath: String = "",
 ) {
@@ -35,16 +40,22 @@ data class ExportDepthSection(
         put("available", available)
         put("width", width)
         put("height", height)
+        put("image_timestamp_ns", imageTimestampNs)
+        put("matches_frame_timestamp", matchesFrameTimestamp)
         if (available) {
             put("valid_pixel_fraction", validPixelFraction.toDouble())
             put("min_depth_m", minDepthM.toDouble())
             put("median_depth_m", medianDepthM.toDouble())
             put("max_depth_m", maxDepthM.toDouble())
+            put("scale_low_m", scaleLowM.toDouble())
+            put("scale_high_m", scaleHighM.toDouble())
         } else {
             put("valid_pixel_fraction", 0)
             put("min_depth_m", 0)
             put("median_depth_m", 0)
             put("max_depth_m", 0)
+            put("scale_low_m", 0)
+            put("scale_high_m", 0)
         }
         put("bin_path", binPath)
         put("png_path", pngPath)
@@ -55,10 +66,14 @@ data class ExportSmoothedDepthSection(
     val available: Boolean,
     val width: Int = 0,
     val height: Int = 0,
+    val imageTimestampNs: Long = 0L,
+    val matchesFrameTimestamp: Boolean = false,
     val validPixelFraction: Float = 0f,
     val minDepthM: Float = 0f,
     val medianDepthM: Float = 0f,
     val maxDepthM: Float = 0f,
+    val scaleLowM: Float = 0f,
+    val scaleHighM: Float = 0f,
     val binPath: String = "",
     val pngPath: String = "",
 ) {
@@ -66,10 +81,14 @@ data class ExportSmoothedDepthSection(
         put("available", available)
         put("width", width)
         put("height", height)
+        put("image_timestamp_ns", imageTimestampNs)
+        put("matches_frame_timestamp", matchesFrameTimestamp)
         put("valid_pixel_fraction", validPixelFraction.toDouble())
         put("min_depth_m", minDepthM.toDouble())
         put("median_depth_m", medianDepthM.toDouble())
         put("max_depth_m", maxDepthM.toDouble())
+        put("scale_low_m", scaleLowM.toDouble())
+        put("scale_high_m", scaleHighM.toDouble())
         put("bin_path", binPath)
         put("png_path", pngPath)
     }
@@ -79,6 +98,8 @@ data class ExportConfidenceSection(
     val available: Boolean,
     val width: Int = 0,
     val height: Int = 0,
+    val imageTimestampNs: Long = 0L,
+    val matchesFrameTimestamp: Boolean = false,
     val meanConfidence: Float = 0f,
     val highConfidenceFraction: Float = 0f,
     val pngPath: String = "",
@@ -87,9 +108,39 @@ data class ExportConfidenceSection(
         put("available", available)
         put("width", width)
         put("height", height)
+        put("image_timestamp_ns", imageTimestampNs)
+        put("matches_frame_timestamp", matchesFrameTimestamp)
         put("mean_confidence", meanConfidence.toDouble())
         put("high_confidence_fraction", highConfidenceFraction.toDouble())
         put("png_path", pngPath)
+    }
+}
+
+data class ExportOverlayEvidenceSection(
+    val available: Boolean,
+    val mode: String = "Off",
+    val source: String = "Smoothed",
+    val opacity: Float = 0f,
+    val confidenceThreshold: Int = 0,
+    val viewportWidth: Int = 0,
+    val viewportHeight: Int = 0,
+    val displayRotation: Int = 0,
+    val openglNdcToDepthTextureUv: List<Float> = emptyList(),
+    val previewPngPath: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("available", available)
+        put("mode", mode)
+        put("source", source)
+        put("opacity", opacity.toDouble())
+        put("confidence_threshold", confidenceThreshold)
+        put("viewport_width", viewportWidth)
+        put("viewport_height", viewportHeight)
+        put("display_rotation", displayRotation)
+        put("opengl_ndc_to_depth_texture_uv", JSONArray().apply {
+            openglNdcToDepthTextureUv.forEach { put(it.toDouble()) }
+        })
+        put("preview_png_path", previewPngPath)
     }
 }
 
@@ -151,7 +202,7 @@ data class ArCoreSnapshotExport(
     val camera2TargetCameraIdNote: String =
         "ChArUco tool uses Camera2 camera_id 0 at 4000x3000; ARCore session is separate and not proven to use the same physical camera.",
     val overlayAlignmentNote: String =
-        "Depth/confidence PNG artifacts are not pixel-aligned to the GLES preview; overlay in-app is approximate only.",
+        "Live depth overlay is rendered in the GLES preview using ARCore OpenGL-NDC to TEXTURE_NORMALIZED depth coordinate transforms. Exported depth PNGs remain raw depth-image artifacts; overlay_evidence preview PNG captures the rendered result.",
     val timestampNs: Long,
     val androidCameraTimestampNs: Long,
     val trackingState: String,
@@ -161,6 +212,7 @@ data class ArCoreSnapshotExport(
     val rawDepth: ExportDepthSection,
     val smoothedDepth: ExportSmoothedDepthSection,
     val confidence: ExportConfidenceSection,
+    val overlayEvidence: ExportOverlayEvidenceSection,
     val charucoIntrinsicsDiff: ExportCharucoIntrinsicsDiff,
     val jsonFileName: String,
 ) {
@@ -179,6 +231,7 @@ data class ArCoreSnapshotExport(
         put("raw_depth", rawDepth.toJson())
         put("smoothed_depth", smoothedDepth.toJson())
         put("confidence", confidence.toJson())
+        put("overlay_evidence", overlayEvidence.toJson())
         put("charuco_intrinsics_diff", charucoIntrinsicsDiff.toJson())
     }
 }

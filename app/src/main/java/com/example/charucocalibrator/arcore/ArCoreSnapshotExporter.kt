@@ -9,7 +9,10 @@ import com.example.charucocalibrator.arcore.model.ExportCharucoIntrinsicsDiff
 import com.example.charucocalibrator.arcore.model.ExportConfidenceSection
 import com.example.charucocalibrator.arcore.model.ExportDepthSection
 import com.example.charucocalibrator.arcore.model.ExportIntrinsics
+import com.example.charucocalibrator.arcore.model.ExportOverlayEvidenceSection
 import com.example.charucocalibrator.arcore.model.ExportSmoothedDepthSection
+import com.example.charucocalibrator.arcore.model.DepthOverlayMode
+import com.example.charucocalibrator.arcore.model.DepthSourceToggle
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -25,11 +28,23 @@ data class ArCoreSnapshotResult(
     val confidenceAvailable: Boolean = false,
 )
 
+data class ArCoreOverlayEvidence(
+    val previewBitmap: Bitmap?,
+    val mode: DepthOverlayMode,
+    val source: DepthSourceToggle,
+    val opacity: Float,
+    val confidenceThreshold: Int,
+)
+
 object ArCoreSnapshotExporter {
     private const val EXPORT_SUBDIR = "arcore_snapshots"
     private const val JSON_INDENT = 2
 
-    fun exportSnapshot(context: Context, frameState: ArCoreFrameState): ArCoreSnapshotResult {
+    fun exportSnapshot(
+        context: Context,
+        frameState: ArCoreFrameState,
+        overlayEvidence: ArCoreOverlayEvidence? = null,
+    ): ArCoreSnapshotResult {
         val appContext = context.applicationContext
         val exportDir = (appContext.getExternalFilesDir(null) ?: appContext.filesDir)
             .resolve(EXPORT_SUBDIR)
@@ -42,6 +57,7 @@ object ArCoreSnapshotExporter {
         val smoothedBinName = "arcore_smoothed_depth_$epochMs.bin"
         val smoothedPngName = "arcore_smoothed_depth_$epochMs.png"
         val confidencePngName = "arcore_confidence_$epochMs.png"
+        val overlayPngName = "arcore_overlay_preview_$epochMs.png"
         val jsonName = "arcore_snapshot_$epochMs.json"
 
         val rawDepth = frameState.rawDepth
@@ -73,6 +89,12 @@ object ArCoreSnapshotExporter {
         } else {
             ""
         }
+        val overlayPngPath = overlayEvidence?.previewBitmap?.let { preview ->
+            writeBitmapPng(exportDir.resolve(overlayPngName), preview)
+            preview.recycle()
+            filesWritten.add(overlayPngName)
+            overlayPngName
+        } ?: ""
 
         val charucoDiff = computeCharucoDiff(context, frameState)
         val snapshot = ArCoreSnapshotExport(
@@ -86,10 +108,14 @@ object ArCoreSnapshotExporter {
                 available = rawDepth != null,
                 width = rawDepth?.width ?: 0,
                 height = rawDepth?.height ?: 0,
+                imageTimestampNs = rawDepth?.imageTimestampNs ?: 0L,
+                matchesFrameTimestamp = rawDepth?.imageTimestampNs == frameState.timestampNs,
                 validPixelFraction = rawDepth?.stats?.validPixelFraction ?: 0f,
                 minDepthM = rawDepth?.stats?.minDepthM ?: 0f,
                 medianDepthM = rawDepth?.stats?.medianDepthM ?: 0f,
                 maxDepthM = rawDepth?.stats?.maxDepthM ?: 0f,
+                scaleLowM = rawDepth?.scaleLowM ?: 0f,
+                scaleHighM = rawDepth?.scaleHighM ?: 0f,
                 binPath = rawBinPath,
                 pngPath = rawPngPath,
             ),
@@ -97,10 +123,14 @@ object ArCoreSnapshotExporter {
                 available = smoothedDepth != null,
                 width = smoothedDepth?.width ?: 0,
                 height = smoothedDepth?.height ?: 0,
+                imageTimestampNs = smoothedDepth?.imageTimestampNs ?: 0L,
+                matchesFrameTimestamp = smoothedDepth?.imageTimestampNs == frameState.timestampNs,
                 validPixelFraction = smoothedDepth?.stats?.validPixelFraction ?: 0f,
                 minDepthM = smoothedDepth?.stats?.minDepthM ?: 0f,
                 medianDepthM = smoothedDepth?.stats?.medianDepthM ?: 0f,
                 maxDepthM = smoothedDepth?.stats?.maxDepthM ?: 0f,
+                scaleLowM = smoothedDepth?.scaleLowM ?: 0f,
+                scaleHighM = smoothedDepth?.scaleHighM ?: 0f,
                 binPath = smoothedBinPath,
                 pngPath = smoothedPngPath,
             ),
@@ -108,9 +138,23 @@ object ArCoreSnapshotExporter {
                 available = confidence != null,
                 width = confidence?.width ?: 0,
                 height = confidence?.height ?: 0,
+                imageTimestampNs = confidence?.imageTimestampNs ?: 0L,
+                matchesFrameTimestamp = confidence?.imageTimestampNs == frameState.timestampNs,
                 meanConfidence = confidence?.stats?.meanConfidence ?: 0f,
                 highConfidenceFraction = confidence?.stats?.highConfidenceFraction ?: 0f,
                 pngPath = confidencePngPath,
+            ),
+            overlayEvidence = ExportOverlayEvidenceSection(
+                available = overlayPngPath.isNotEmpty(),
+                mode = overlayEvidence?.mode?.name ?: DepthOverlayMode.Off.name,
+                source = overlayEvidence?.source?.name ?: DepthSourceToggle.Smoothed.name,
+                opacity = overlayEvidence?.opacity ?: 0f,
+                confidenceThreshold = overlayEvidence?.confidenceThreshold ?: 0,
+                viewportWidth = frameState.viewportWidth,
+                viewportHeight = frameState.viewportHeight,
+                displayRotation = frameState.displayRotation,
+                openglNdcToDepthTextureUv = frameState.overlayNdcToDepthTextureUv,
+                previewPngPath = overlayPngPath,
             ),
             charucoIntrinsicsDiff = charucoDiff,
             jsonFileName = jsonName,

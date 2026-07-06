@@ -65,6 +65,9 @@ fun ArCoreSnapshotPanel(
             )
         }
         lastExport?.let { result ->
+            val overlayPreviewExported = result.filesWritten.any { fileName ->
+                fileName.startsWith("arcore_overlay_preview_")
+            }
             Text(
                 text = "Folder: ${result.exportDir.absolutePath}",
                 style = MaterialTheme.typography.bodySmall,
@@ -74,7 +77,8 @@ fun ArCoreSnapshotPanel(
             Text(
                 text = "Depth in export: raw=${result.rawDepthAvailable} " +
                     "smoothed=${result.smoothedDepthAvailable} " +
-                    "confidence=${result.confidenceAvailable}",
+                    "confidence=${result.confidenceAvailable} " +
+                    "overlay_preview=$overlayPreviewExported",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp),
             )

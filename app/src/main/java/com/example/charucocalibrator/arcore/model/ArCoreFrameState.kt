@@ -30,8 +30,11 @@ data class ConfidenceStats(
 data class DepthImageData(
     val width: Int,
     val height: Int,
+    val imageTimestampNs: Long,
     val depthMm: ShortArray,
     val stats: DepthStats,
+    val scaleLowM: Float = 0f,
+    val scaleHighM: Float = 0f,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -39,15 +42,21 @@ data class DepthImageData(
         other as DepthImageData
         return width == other.width &&
             height == other.height &&
+            imageTimestampNs == other.imageTimestampNs &&
             depthMm.contentEquals(other.depthMm) &&
-            stats == other.stats
+            stats == other.stats &&
+            scaleLowM == other.scaleLowM &&
+            scaleHighM == other.scaleHighM
     }
 
     override fun hashCode(): Int {
         var result = width
         result = 31 * result + height
+        result = 31 * result + imageTimestampNs.hashCode()
         result = 31 * result + depthMm.contentHashCode()
         result = 31 * result + stats.hashCode()
+        result = 31 * result + scaleLowM.hashCode()
+        result = 31 * result + scaleHighM.hashCode()
         return result
     }
 }
@@ -55,6 +64,7 @@ data class DepthImageData(
 data class ConfidenceImageData(
     val width: Int,
     val height: Int,
+    val imageTimestampNs: Long,
     val confidence: ByteArray,
     val stats: ConfidenceStats,
 ) {
@@ -64,6 +74,7 @@ data class ConfidenceImageData(
         other as ConfidenceImageData
         return width == other.width &&
             height == other.height &&
+            imageTimestampNs == other.imageTimestampNs &&
             confidence.contentEquals(other.confidence) &&
             stats == other.stats
     }
@@ -71,6 +82,7 @@ data class ConfidenceImageData(
     override fun hashCode(): Int {
         var result = width
         result = 31 * result + height
+        result = 31 * result + imageTimestampNs.hashCode()
         result = 31 * result + confidence.contentHashCode()
         result = 31 * result + stats.hashCode()
         return result
@@ -92,6 +104,11 @@ data class ArCoreFrameState(
     val displayRotation: Int = Surface.ROTATION_0,
     val viewportWidth: Int = 0,
     val viewportHeight: Int = 0,
+    val overlayMode: String = DepthOverlayMode.Off.name,
+    val overlaySource: String = DepthSourceToggle.Smoothed.name,
+    val overlayOpacity: Float = 0f,
+    val overlayConfidenceThreshold: Int = 200,
+    val overlayNdcToDepthTextureUv: List<Float> = emptyList(),
 ) {
     fun deepCopyForExport(): ArCoreFrameState = copy(
         rawDepth = rawDepth?.copy(depthMm = rawDepth.depthMm.copyOf()),
