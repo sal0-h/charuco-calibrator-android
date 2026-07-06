@@ -23,7 +23,36 @@ Android research app for **live ChArUco camera calibration** on Samsung Galaxy S
 ./gradlew installDebug --no-daemon   # device connected
 ```
 
+Signed **release** APK (local, requires `keystore.properties` — see Releases):
+
+```bash
+./gradlew assembleRelease --no-daemon
+```
+
 Requires JDK 21 and Android SDK (API 36). See [AGENTS.md](AGENTS.md) for cloud/emulator caveats.
+
+## Releases
+
+Pre-built **signed release** APKs are attached to [GitHub Releases](https://github.com/sal0-h/charuco-calibrator-android/releases).
+
+1. Open **Releases** → latest `v*` tag → download `app-release.apk`
+2. On device: allow install from unknown sources, install APK
+3. Requires **physical S23 Ultra** (or device with rear `camera_id "0"`)
+
+To publish a new release, push a version tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+CI builds `assembleRelease` and uploads the signed APK. One-time signing setup for maintainers:
+
+```bash
+chmod +x scripts/setup_release_signing.sh
+./scripts/setup_release_signing.sh
+# then run the printed gh secret set commands
+```
 
 ## ChArUco workflow (device)
 

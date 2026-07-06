@@ -33,3 +33,9 @@ pulled_disparity/
 screen_board/
 stereo_session_latest.jsonl
 stereo_support_bundle_latest.zip
+
+# Release signing (local only — CI uses GitHub secrets)
+keystore.properties
+release.keystore
+*.jks
+release-keystore.base64.txt
