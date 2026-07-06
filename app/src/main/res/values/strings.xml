@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">CharucoCalibrator</string>
+    <string name="app_name">Charuco Calibrator</string>
     <string name="home_title">Tools</string>
     <string name="tool_charuco_title">ChArUco Calibrator</string>
     <string name="tool_charuco_subtitle">Camera2 board calibration</string>

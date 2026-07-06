@@ -1,134 +1,49 @@
 # Agent progress
 
-## Stereo probe polish — iteration 7 (pullable device diagnostics)
-
-- Every stereo-tool session now writes structured JSONL diagnostics with camera enumeration,
-  probe attempts/results, stream state and sampled telemetry, capture timestamps, board acceptance,
-  calibration, disparity, lifecycle, and errors.
-- **Export support bundle** creates `stereo_support_bundle_latest.zip` containing the session log,
-  camera/probe/calibration reports, latest stereo-pair metadata, up to 50 board-corner records, and
-  the latest disparity JSON. Captured JPEG/PNG data is deliberately excluded to keep the bundle
-  small enough to pull and inspect quickly.
-- Stable adb paths: `stereo_diagnostics/stereo_session_latest.jsonl` and
-  `stereo_support_bundle_latest.zip` under the app-specific external files directory.
-
-## Stereo probe polish — iteration 1 (stream/probe lifecycle)
-
-- Probe attempts now use one controller, wait for actual `STREAMING`, close camera resources before the next attempt, expose pair/resolution progress, and support cancellation.
-- Left/right frames are paired by nearest sensor timestamp before probe evaluation or export; stale previous-frame deltas are no longer mixed into probe medians.
-- Manual pair selection no longer requires a probe PASS. Safe shared resolutions are tried in the order `1920x1440`, `1280x960`, `640x480` before larger outputs.
-- Duplicate wide cameras are each prioritized with ultrawide/tele candidates, and pair labels include physical IDs.
-- Cloud verification: `testDebugUnitTest` passes. Physical S23 Ultra retest pending: run probe, then manually start IDs `2+5` and `2+6` if no PASS appears.
-
-## Stereo probe polish — iteration 2 (guided workflow and capture safety)
-
-- Replaced the undifferentiated control list with six cards: Setup, Select pair, Stream, Capture, Calibrate, and Disparity. Probe progress/cancel, a pinned status banner, readiness explanations, and the live timestamp hero metric are visible in context.
-- Probe runtime is capped at 30 seconds and stops at the first working pair; every untested or failed pair remains manually selectable.
-- Calibration board captures now record physical camera IDs and only solve/clear the selected pair. ChArUco detection reads the NV21 luma plane directly instead of JPEG-encoding and decoding it first.
-- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes (existing project warnings only).
-- S23 Ultra retest pending: (1) run probe and confirm progress, (2) start the selected or manual `2+5` / `2+6` pair and confirm live delta, (3) save stereo + board pairs and calibrate after 10 captures.
-
-## Stereo probe polish — iteration 3 (disparity performance)
-
-- Replaced per-pixel OpenCV JNI reads and boxed sorting with one bulk `CV_16SC1` read plus a compact histogram for statistics and colormap percentiles.
-- Added left/right size validation, guaranteed native disparity/SGBM cleanup on failures, and explicit PNG compression checks.
-- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes.
-
-## Stereo probe polish — iteration 4 (stream throughput and session integrity)
-
-- Streaming and probing now match timestamps from lightweight frame headers. Full YUV→NV21 conversion runs only after **Save stereo pair** or **Save board pair** requests the next synchronized frames.
-- Live Compose updates are capped at 10 Hz while internal probe counts/deltas continue updating per frame, preventing UI recomposition from throttling the camera image thread.
-- Board calibration sessions are keyed by left/right physical IDs and exact resolution; mixed-resolution captures are excluded and the solver rejects mixed sessions defensively.
-- Cloud verification: forced clean `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon --rerun-tasks` passes (51/51 tasks executed).
-- S23 Ultra retest: confirm probe FPS/delta update without stalls, then save a stereo pair and 10 board pairs at one displayed resolution before calibrating.
-
-## Stereo probe polish — iteration 5 (S23 lens identity)
-
-- The observed S23 Ultra physical-ID signature now maps IDs `2/5/6/7` to ultrawide/wide/wide/tele explicitly, so duplicate or fallback `6.3–6.4 mm` metadata cannot relabel ID 6 as tele.
-- Other devices use conservative focal-length bands and no longer invent a tele label merely because one duplicate wide focal length is numerically largest.
-- Physical retest: confirm Setup displays `2 ultrawide`, `5 wide`, `6 wide`, and `7 tele`; both `2+5` and `2+6` should remain top probe candidates.
-
-## Stereo probe polish — iteration 6 (last working configuration)
-
-- A probe PASS or a manually started stream that produces matched frames now caches its physical IDs and exact resolution in app preferences.
-- The next tool launch restores that supported pair/resolution, marks it **LAST WORKING**, and still allows a fresh probe or any manual pair selection.
-- Stale cache entries are discarded when the physical IDs or shared YUV size are no longer exposed.
-- Cloud verification: `./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon` passes.
+Internal milestone log for cloud agents. User-facing overview: [README.md](README.md).
 
 ## Calibration contract
 
-- Device target: Samsung Galaxy S23 Ultra.
-- Camera path: Camera2, `camera_id "0"`.
-- Analysis grid: sensor-native `4000x3000` landscape YUV, with documented `1920x1440` fallback.
-- Orientation note: `Camera2 sensor-native landscape grid; not display-rotated`.
-- Do not combine these frames with old `3000x4000` portrait Pro-mode images.
+- Device: Samsung Galaxy S23 Ultra, Camera2 `camera_id "0"`
+- Capture: sensor-native **4000×3000** landscape YUV (`1920×1440` fallback)
+- Export: **3000×4000** portrait K (`orientation_convention: pipeline_portrait_ccw90`)
+- Board: 7×10 ChArUco, 25 mm / 18 mm, `DICT_5X5_100`
+- Solver: `flags_zero` only; manual ID map correspondence (do not change)
 
-## Milestone status
+## Milestones
 
-| Milestone | Result |
-| --- | --- |
-| v0.1–v0.3 | Camera2 preview, diagnostics, test-frame save |
-| B–I | Sharpness, ChArUco detection, auto-acceptance, calibration JSON, lifecycle cleanup |
-| Phase 1+2 | Capture metadata, stability gates, rich calibration report |
-| Sub-1 px (#5) | Corner refine, min 18 corners, session isolation, debug overlays, `flags_zero` only |
-| ARCore Explorer (#3) | Diagnostic tool on home screen — not a calibration path |
-| Multi-Camera Stereo Probe | Dual physical streaming, board-pair stereo calib, SGBM disparity export |
+| Area | Status |
+|------|--------|
+| Camera2 + ChArUco live calib | Shipped — sub-1 px achieved on device (~0.97 px RMS) |
+| Session isolation + portrait JSON | Shipped |
+| Pose similarity (all-session dedup) | Shipped |
+| ARCore Explorer | Shipped — diagnostics only |
+| Multi-Camera Stereo Probe | Shipped — dual stream, board stereo calib, disparity, support bundle export |
 
-Pipeline verified on device: stored-corner calibration matches expected behavior; no further offline audit tooling in repo.
+## Acceptance gates (auto-capture)
 
-## Sub-1 px capture
-
-- `CharucoCornerRefiner` after `detectBoard` in `CharucoFrameDetector.kt`.
-- `MIN_CHARUCO_CORNERS = 18`; UI shows corner count vs minimum.
-- `CaptureSessionManager` tags frames with `capture_session_id` and `capture_frame_index`.
-- Calibrate / clear / export overlays operate on current session only.
-- Debug overlays: `debug_overlays/debug_<session>_frame<N>_ids.jpg`.
-- Solver: `flags_zero` only.
-
-## Build / lint
-
-- `assembleDebug` and `lintDebug` pass on `main`.
-- Unit tests: `ArCoreDepthColorizerTest`, `ArCoreOverlayOrientationTest`, `CharucoIntrinsicsAlignerTest`, `stereo/*` (metadata, timestamp delta, probe report, resolution selector).
+| Gate | Value |
+|------|-------|
+| Min corners | 18 |
+| Sharpness (Laplacian) | > 100 |
+| Min bbox area ratio | 0.10 |
+| ISO / exposure | ≤ 1000 / ≤ 33 ms |
+| Pose dedup | `PoseSimilarity` vs all session accepts; 3×3 pose grid |
+| Min frames to calibrate | 10 |
 
 ## Output paths
 
 Base: `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
 
-| Artifact | Path |
-| --- | --- |
-| Accepted frames | `accepted_frames/accepted_<epoch>.jpg` + `.json` |
-| Calibration JSON | `charuco_calibration_result.json` (3000×4000 pipeline portrait K; `orientation_convention: pipeline_portrait_ccw90`) |
-| Debug ID overlays | `debug_overlays/debug_<session>_frame<N>_ids.jpg` |
-| Camera report | `camera_report.json` |
-| ARCore snapshots | `arcore_snapshots/` |
-| Stereo pairs | `stereo_pairs/stereo_pair_<epoch>/` (`left.jpg`, `right.jpg`, `metadata.json`) |
-| Stereo probe report | `stereo_probe_report.json` |
-| Stereo calibration pairs | `stereo_calibration_pairs/pair_<n>/` |
-| Stereo calibration | `stereo_calibration.json` |
-| Disparity debug | `disparity_<epoch>.png` + `disparity_<epoch>.json` |
+- `charuco_calibration_result.json` — portrait intrinsics for pipeline
+- `accepted_frames/` — JPEG + JSON per accepted frame
+- `debug_overlays/` — ID overlay JPEGs
+- `stereo_pairs/`, `stereo_calibration.json`, `stereo_probe_report.json`
+- `stereo_diagnostics/stereo_session_latest.jsonl`, `stereo_support_bundle_latest.zip`
+- `arcore_snapshots/` — ARCore export artifacts
 
-## S23 Ultra device checklist (Multi-Camera Stereo Probe)
+## Build
 
-1. Pull branch, `installDebug`, open **Multi-Camera Stereo Probe** from home.
-2. Tap **Run pair probe** — expect wide+ultrawide or wide+tele PASS if HAL allows dual stream.
-3. **Start streams** on first working pair; confirm live `timestamp_delta_ns` (target &lt; 3 ms on device).
-4. **Save stereo pair** — verify `stereo_pairs/stereo_pair_<epoch>/metadata.json` fields.
-5. Optional: toggle **Show camera previews** (off by default); confirm streams still save.
-6. Save **10+ board pairs** with printed ChArUco board visible in both eyes.
-7. **Calibrate stereo** — verify `stereo_calibration.json` (K1/K2, R, T, baseline, RMS).
-8. **Compute disparity** on latest saved pair — verify PNG colormap + JSON sidecar.
-9. Confirm ChArUco Calibrator and ARCore Explorer unchanged.
-
-## Known limitations
-
-- ChArUco detection uses analysis-frame coordinates; no preview overlay drawn.
-- Saved JPEGs are sensor-native landscape (no display-rotation EXIF).
-- ARCore image stream (640×480) ≠ ChArUco Camera2 stream (4000×3000).
-- Sub-1 px requires printed matte board, even lighting, and curated session frames.
-- `accepted_frames/` accumulates across sessions until cleared on device.
-
-## Lifecycle
-
-- `Image` closed via `image.use {}` and `acquireLatestImage()`.
-- Camera session/device/surfaces closed in `closeCameraResources()`.
-- OpenCV analysis off UI thread; detection `Mat` objects released each frame.
+```bash
+./gradlew assembleDebug lintDebug testDebugUnitTest --no-daemon
+```

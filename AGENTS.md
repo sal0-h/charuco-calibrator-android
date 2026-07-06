@@ -17,8 +17,7 @@ wrapper tasks; the notes below only cover non-obvious caveats.
 - Build: `./gradlew assembleDebug --no-daemon` (the first run auto-installs the
   minor platform `android-36.1` via the SDK manager — allow a few minutes).
 - Lint: `./gradlew lintDebug --no-daemon`.
-- Unit tests: `./gradlew testDebugUnitTest --no-daemon` (only the default
-  example test exists today).
+- Unit tests: `./gradlew testDebugUnitTest --no-daemon`
 
 ### Running the app on the emulator (important caveats)
 
