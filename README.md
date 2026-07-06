@@ -47,8 +47,11 @@ Promote intrinsics in [qsiurp-metric-depth](https://github.com/sal0-h/qsiurp-met
 ## Development
 
 - Package: `com.example.charucocalibrator`
-- Agent notes: [AGENT_PROGRESS.md](AGENT_PROGRESS.md)
 - Board generator (optional): `scripts/generate_charuco_board_for_screen.py`
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Target device
 
