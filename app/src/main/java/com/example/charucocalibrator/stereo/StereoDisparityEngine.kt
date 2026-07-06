@@ -231,9 +231,10 @@ class StereoDisparityEngine {
             "Expected CV_16SC1 disparity, got type ${disparity.type()}"
         }
         val values = ShortArray(disparity.rows() * disparity.cols())
-        val read = disparity.get(0, 0, values)
-        check(read == values.size) {
-            "Read $read/${values.size} disparity values"
+        val bytesRead = disparity.get(0, 0, values)
+        val expectedBytes = values.size * Short.SIZE_BYTES
+        check(bytesRead == expectedBytes) {
+            "Read $bytesRead/$expectedBytes disparity bytes"
         }
         return values
     }
