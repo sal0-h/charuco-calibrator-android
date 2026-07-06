@@ -97,7 +97,7 @@ Base: `/storage/emulated/0/Android/data/com.example.charucocalibrator/files/`
 | Artifact | Path |
 | --- | --- |
 | Accepted frames | `accepted_frames/accepted_<epoch>.jpg` + `.json` |
-| Calibration JSON | `charuco_calibration_result.json` |
+| Calibration JSON | `charuco_calibration_result.json` (3000×4000 pipeline portrait K; `orientation_convention: pipeline_portrait_ccw90`) |
 | Debug ID overlays | `debug_overlays/debug_<session>_frame<N>_ids.jpg` |
 | Camera report | `camera_report.json` |
 | ARCore snapshots | `arcore_snapshots/` |

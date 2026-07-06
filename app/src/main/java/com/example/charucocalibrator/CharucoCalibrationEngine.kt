@@ -406,20 +406,36 @@ class CharucoCalibrationEngine {
                 }
             }
 
-            val matrixValues = Array(3) { row ->
-                DoubleArray(3) { column ->
-                    OpenCvMatAccess.readMatrixValue(cameraMatrix, row, column)
-                }
-            }
+            val portrait = PipelinePortraitIntrinsicsRotator.rotateFromSensorLandscape(
+                sensorLandscapeWidth = imageWidth,
+                sensorLandscapeHeight = imageHeight,
+                fx = result.fx ?: OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
+                fy = result.fy ?: OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
+                cx = result.cx ?: OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
+                cy = result.cy ?: OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 2),
+                distortionCoefficients = coeffs
+            )
 
             output.writeText(
                 JSONObject().apply {
                     put("source", "android_camera2_charuco_live")
                     put("device_hint", "Samsung Galaxy S23 Ultra")
                     put("camera_id", cameraId)
-                    put("image_width", imageWidth)
-                    put("image_height", imageHeight)
-                    put("orientation_note", ORIENTATION_NOTE)
+                    put("image_width", portrait.imageWidth)
+                    put("image_height", portrait.imageHeight)
+                    put("orientation_note", PipelinePortraitIntrinsicsRotator.ORIENTATION_NOTE)
+                    put(
+                        "orientation_convention",
+                        PipelinePortraitIntrinsicsRotator.ORIENTATION_CONVENTION
+                    )
+                    put(
+                        "sensor_native_capture",
+                        JSONObject().apply {
+                            put("image_width", imageWidth)
+                            put("image_height", imageHeight)
+                            put("orientation_note", ORIENTATION_NOTE)
+                        }
+                    )
                     put(
                         "board",
                         JSONObject().apply {
@@ -431,13 +447,13 @@ class CharucoCalibrationEngine {
                             put("dictionary", BoardConfig.DICT_NAME)
                         }
                     )
-                    put("camera_matrix", matrixValues.toJsonArray())
-                    put("fx", result.fx)
-                    put("fy", result.fy)
-                    put("cx", result.cx)
-                    put("cy", result.cy)
+                    put("camera_matrix", portrait.cameraMatrix.toJsonArray())
+                    put("fx", portrait.fx)
+                    put("fy", portrait.fy)
+                    put("cx", portrait.cx)
+                    put("cy", portrait.cy)
                     put("distortion_model", "opencv_pinhole_5")
-                    put("distortion_coefficients", coeffs.toJsonArray())
+                    put("distortion_coefficients", portrait.distortionCoefficients.toJsonArray())
                     put("reprojection_error_px", result.reprojectionErrorPx)
                     result.perViewErrorsPx?.let { errors ->
                         put("per_view_errors_px", errors.toJsonArray())
