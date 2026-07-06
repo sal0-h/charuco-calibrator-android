@@ -7,9 +7,29 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+/.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
+/.idea/studiobot.xml
 .DS_Store
 /build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
+
+# Editor
+.vscode/
+.kotlin/
+
+# Local calibration / stereo debug artifacts
+accepted_frames/
+audit_debug/
+audit_*.json
+charuco_calibration_*.json
+charuco_calibration_result.json
+corner_diff_report.json
+logcat.txt
+pulled_disparity/
+screen_board/
+stereo_session_latest.jsonl
+stereo_support_bundle_latest.zip

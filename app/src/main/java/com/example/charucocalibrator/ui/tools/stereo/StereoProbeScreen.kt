@@ -67,6 +67,7 @@ import com.example.charucocalibrator.stereo.StereoWorkingConfigStore
 import com.example.charucocalibrator.stereo.model.StereoCalibrationResult
 import com.example.charucocalibrator.stereo.model.StereoPairProbeResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -159,14 +160,31 @@ private fun StereoProbeContent(
             }
             when (state.streamState) {
                 StereoStreamState.STREAMING -> {
-                    statusMessage = "Streams are active. Confirm the timestamp delta, then capture."
-                    statusIsError = false
+                    if (!statusIsError) {
+                        statusMessage = STREAMING_STATUS_MESSAGE
+                    }
                 }
                 StereoStreamState.FAILED -> {
                     statusMessage = state.halError ?: "The camera HAL rejected the stream."
                     statusIsError = true
                 }
                 else -> Unit
+            }
+        }
+    }
+
+    LaunchedEffect(statusMessage, statusIsError) {
+        if (!statusIsError || liveState.streamState == StereoStreamState.FAILED) {
+            return@LaunchedEffect
+        }
+        val displayedError = statusMessage
+        delay(ERROR_STATUS_DURATION_MS)
+        if (statusIsError && statusMessage == displayedError) {
+            statusIsError = false
+            statusMessage = if (liveState.streamState == StereoStreamState.STREAMING) {
+                STREAMING_STATUS_MESSAGE
+            } else {
+                null
             }
         }
     }
@@ -989,3 +1007,7 @@ private fun StereoPermissionPrompt(
 private fun Context.hasCameraPermission(): Boolean =
     ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
         PackageManager.PERMISSION_GRANTED
+
+private const val ERROR_STATUS_DURATION_MS = 10_000L
+private const val STREAMING_STATUS_MESSAGE =
+    "Streams are active. Confirm the timestamp delta, then capture."
