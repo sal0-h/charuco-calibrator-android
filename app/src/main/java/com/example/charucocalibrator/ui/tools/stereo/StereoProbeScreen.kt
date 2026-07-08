@@ -62,6 +62,7 @@ import com.example.charucocalibrator.stereo.StereoProbeProgress
 import com.example.charucocalibrator.stereo.StereoProbeReportExporter
 import com.example.charucocalibrator.stereo.StereoStreamState
 import com.example.charucocalibrator.stereo.StereoSupportBundleExporter
+import com.example.charucocalibrator.stereo.StereoTimestampUtils
 import com.example.charucocalibrator.stereo.StereoWorkingConfig
 import com.example.charucocalibrator.stereo.StereoWorkingConfigStore
 import com.example.charucocalibrator.stereo.model.StereoCalibrationResult
@@ -73,7 +74,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import kotlin.math.abs
 
 @Composable
 fun StereoProbeScreen(
@@ -524,7 +524,10 @@ private fun StereoProbeContent(
                             put("right_timestamp_ns", pair.second.sensorTimestampNs)
                             put(
                                 "timestamp_delta_ns",
-                                abs(pair.first.sensorTimestampNs - pair.second.sensorTimestampNs)
+                                StereoTimestampUtils.deltaNs(
+                                    pair.first.sensorTimestampNs,
+                                    pair.second.sensorTimestampNs,
+                                )
                             )
                         }
                     )
