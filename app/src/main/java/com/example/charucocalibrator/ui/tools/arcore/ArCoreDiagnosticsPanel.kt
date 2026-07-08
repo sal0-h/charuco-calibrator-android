@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.example.charucocalibrator.arcore.model.ArCoreFrameState
+import com.example.charucocalibrator.arcore.model.CameraIntrinsicsSnapshot
 
 @Composable
 fun ArCoreDiagnosticsPanel(
@@ -38,24 +39,14 @@ fun ArCoreDiagnosticsPanel(
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.padding(top = 8.dp),
         )
-        DiagnosticLine("fx", fmt(frameState.imageIntrinsics.fx))
-        DiagnosticLine("fy", fmt(frameState.imageIntrinsics.fy))
-        DiagnosticLine("cx", fmt(frameState.imageIntrinsics.cx))
-        DiagnosticLine("cy", fmt(frameState.imageIntrinsics.cy))
-        DiagnosticLine("width", frameState.imageIntrinsics.width.toString())
-        DiagnosticLine("height", frameState.imageIntrinsics.height.toString())
+        IntrinsicsDiagnosticLines(frameState.imageIntrinsics)
 
         Text(
             text = "texture_intrinsics",
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.padding(top = 8.dp),
         )
-        DiagnosticLine("fx", fmt(frameState.textureIntrinsics.fx))
-        DiagnosticLine("fy", fmt(frameState.textureIntrinsics.fy))
-        DiagnosticLine("cx", fmt(frameState.textureIntrinsics.cx))
-        DiagnosticLine("cy", fmt(frameState.textureIntrinsics.cy))
-        DiagnosticLine("width", frameState.textureIntrinsics.width.toString())
-        DiagnosticLine("height", frameState.textureIntrinsics.height.toString())
+        IntrinsicsDiagnosticLines(frameState.textureIntrinsics)
 
         Text(
             text = "raw_depth",
@@ -93,6 +84,16 @@ fun ArCoreDiagnosticsPanel(
             DiagnosticLine("high_confidence_fraction", "%.3f".format(conf.stats.highConfidenceFraction))
         } ?: DiagnosticLine("status", "not_available")
     }
+}
+
+@Composable
+private fun IntrinsicsDiagnosticLines(intrinsics: CameraIntrinsicsSnapshot) {
+    DiagnosticLine("fx", fmt(intrinsics.fx))
+    DiagnosticLine("fy", fmt(intrinsics.fy))
+    DiagnosticLine("cx", fmt(intrinsics.cx))
+    DiagnosticLine("cy", fmt(intrinsics.cy))
+    DiagnosticLine("width", intrinsics.width.toString())
+    DiagnosticLine("height", intrinsics.height.toString())
 }
 
 @Composable

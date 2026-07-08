@@ -25,6 +25,7 @@ import com.example.charucocalibrator.CaptureMetadataStore
 import com.example.charucocalibrator.DEFAULT_CAMERA_ID
 import com.example.charucocalibrator.Dimensions
 import com.example.charucocalibrator.FrameMetadata
+import com.example.charucocalibrator.YuvConversions
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -762,7 +763,7 @@ class StereoDualStreamController(
                         width = it.cropRect.width(),
                         height = it.cropRect.height(),
                         sensorTimestampNs = timestamp,
-                        nv21 = StereoYuvUtil.yuv420888ToNv21(it),
+                        nv21 = YuvConversions.yuv420888ToNv21(it),
                         metadata = metadata
                     )
                     val capturedPair = if (isLeft) {

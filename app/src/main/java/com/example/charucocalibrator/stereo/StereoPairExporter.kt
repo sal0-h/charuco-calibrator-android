@@ -1,20 +1,15 @@
 package com.example.charucocalibrator.stereo
 
 import android.content.Context
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
 import com.example.charucocalibrator.Dimensions
 import com.example.charucocalibrator.FrameMetadata
 import com.example.charucocalibrator.ORIENTATION_NOTE
 import com.example.charucocalibrator.stereo.model.StereoPairMetadata
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
 import java.time.Instant
 
 object StereoPairExporter {
-    private const val JPEG_QUALITY = 95
     private const val JSON_INDENT_SPACES = 2
 
     data class ExportResult(
@@ -52,8 +47,8 @@ object StereoPairExporter {
 
         val leftFile = File(directory, "left.jpg")
         val rightFile = File(directory, "right.jpg")
-        writeJpeg(leftFile, leftFrame)
-        writeJpeg(rightFile, rightFrame)
+        StereoFrameJpeg.write(leftFile, leftFrame)
+        StereoFrameJpeg.write(rightFile, rightFrame)
 
         val metadata = StereoPairMetadata(
             logicalCameraId = logicalCameraId,
@@ -86,18 +81,5 @@ object StereoPairExporter {
         )
 
         ExportResult(directory = directory, metadata = metadata)
-    }
-
-    private fun writeJpeg(file: File, frame: StereoFrameSnapshot) {
-        FileOutputStream(file).use { output ->
-            val compressed = YuvImage(
-                frame.nv21,
-                ImageFormat.NV21,
-                frame.width,
-                frame.height,
-                null
-            ).compressToJpeg(Rect(0, 0, frame.width, frame.height), JPEG_QUALITY, output)
-            check(compressed) { "JPEG compression failed" }
-        }
     }
 }

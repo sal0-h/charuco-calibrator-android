@@ -1,5 +1,6 @@
 package com.example.charucocalibrator.arcore.model
 
+import com.example.charucocalibrator.DeviceInfo
 import org.json.JSONObject
 import org.json.JSONArray
 
@@ -196,7 +197,7 @@ data class ExportCharucoIntrinsicsDiff(
 
 data class ArCoreSnapshotExport(
     val source: String = "arcore_explorer",
-    val deviceHint: String = "Samsung Galaxy S23 Ultra",
+    val deviceHint: String = DeviceInfo.describe(),
     val streamEquivalenceWarning: String =
         "ARCore stream is not assumed equivalent to Camera2 camera_id 0 4000x3000 ChArUco stream.",
     val camera2TargetCameraIdNote: String =

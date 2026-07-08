@@ -1,20 +1,16 @@
 package com.example.charucocalibrator.stereo
 
 import android.content.Context
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
 import com.example.charucocalibrator.AcceptanceConfig
 import com.example.charucocalibrator.CharucoFrameDetector
 import com.example.charucocalibrator.DetectionResult
 import com.example.charucocalibrator.Dimensions
 import com.example.charucocalibrator.OpenCvMatAccess
+import com.example.charucocalibrator.YuvConversions
 import org.json.JSONArray
 import org.json.JSONObject
-import org.opencv.core.CvType
 import org.opencv.core.Mat
 import java.io.File
-import java.io.FileOutputStream
 
 data class StereoBoardPairRecord(
     val directory: File,
@@ -130,8 +126,8 @@ class StereoBoardPairStore(
             val leftFile = File(directory, "left.jpg")
             val rightFile = File(directory, "right.jpg")
             val cornersFile = File(directory, "corners.json")
-            writeJpeg(leftFile, leftFrame)
-            writeJpeg(rightFile, rightFrame)
+            StereoFrameJpeg.write(leftFile, leftFrame)
+            StereoFrameJpeg.write(rightFile, rightFrame)
 
             val timestampDeltaNs = StereoTimestampUtils.deltaNs(
                 leftFrame.sensorTimestampNs,
@@ -169,34 +165,11 @@ class StereoBoardPairStore(
     }
 
     private fun detectFromFrame(frame: StereoFrameSnapshot): DetectionResult {
-        val gray = nv21ToGray(frame)
+        val gray = YuvConversions.nv21ToGray(frame.nv21, frame.width, frame.height)
         return try {
             frameDetector.detect(gray)
         } finally {
             gray.release()
-        }
-    }
-
-    private fun nv21ToGray(frame: StereoFrameSnapshot): Mat {
-        val gray = Mat(frame.height, frame.width, CvType.CV_8UC1)
-        val written = gray.put(0, 0, frame.nv21)
-        check(written == frame.width * frame.height) {
-            gray.release()
-            "Failed to copy the NV21 luma plane"
-        }
-        return gray
-    }
-
-    private fun writeJpeg(file: File, frame: StereoFrameSnapshot) {
-        FileOutputStream(file).use { output ->
-            val compressed = YuvImage(
-                frame.nv21,
-                ImageFormat.NV21,
-                frame.width,
-                frame.height,
-                null
-            ).compressToJpeg(Rect(0, 0, frame.width, frame.height), 95, output)
-            check(compressed) { "JPEG compression failed" }
         }
     }
 

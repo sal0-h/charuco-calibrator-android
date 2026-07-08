@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.dp
 import com.example.charucocalibrator.R
 import com.example.charucocalibrator.arcore.ArCoreSnapshotExporter
 import com.example.charucocalibrator.arcore.model.ArCoreFrameState
+import com.example.charucocalibrator.arcore.model.CameraIntrinsicsSnapshot
 import com.example.charucocalibrator.arcore.model.ExportCharucoIntrinsicsDiff
 
 @Composable
@@ -39,21 +40,11 @@ fun ArCoreIntrinsicsPanel(
         )
         IntrinsicsBlock(
             label = "ARCore image stream",
-            fx = frameState.imageIntrinsics.fx,
-            fy = frameState.imageIntrinsics.fy,
-            cx = frameState.imageIntrinsics.cx,
-            cy = frameState.imageIntrinsics.cy,
-            width = frameState.imageIntrinsics.width,
-            height = frameState.imageIntrinsics.height,
+            intrinsics = frameState.imageIntrinsics,
         )
         IntrinsicsBlock(
             label = "ARCore texture / preview",
-            fx = frameState.textureIntrinsics.fx,
-            fy = frameState.textureIntrinsics.fy,
-            cx = frameState.textureIntrinsics.cx,
-            cy = frameState.textureIntrinsics.cy,
-            width = frameState.textureIntrinsics.width,
-            height = frameState.textureIntrinsics.height,
+            intrinsics = frameState.textureIntrinsics,
         )
         Text(
             text = "ChArUco reference (scaled to ARCore image size)",
@@ -115,21 +106,17 @@ fun ArCoreIntrinsicsPanel(
 @Composable
 private fun IntrinsicsBlock(
     label: String,
-    fx: Float,
-    fy: Float,
-    cx: Float,
-    cy: Float,
-    width: Int,
-    height: Int,
+    intrinsics: CameraIntrinsicsSnapshot,
 ) {
     Column(modifier = Modifier.padding(top = 8.dp)) {
         Text(text = label, style = MaterialTheme.typography.labelMedium)
         Text(
-            text = "fx=${"%.1f".format(fx)} fy=${"%.1f".format(fy)} cx=${"%.1f".format(cx)} cy=${"%.1f".format(cy)}",
+            text = "fx=${"%.1f".format(intrinsics.fx)} fy=${"%.1f".format(intrinsics.fy)} " +
+                "cx=${"%.1f".format(intrinsics.cx)} cy=${"%.1f".format(intrinsics.cy)}",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            text = "${width}×${height}",
+            text = "${intrinsics.width}×${intrinsics.height}",
             style = MaterialTheme.typography.bodySmall,
         )
     }

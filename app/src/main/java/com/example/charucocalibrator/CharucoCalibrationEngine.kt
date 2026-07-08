@@ -2,7 +2,6 @@ package com.example.charucocalibrator
 
 import android.content.Context
 import android.util.Log
-import android.util.SizeF
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.android.OpenCVLoader
@@ -15,11 +14,6 @@ import org.opencv.core.TermCriteria
 import java.io.File
 import java.time.Instant
 import kotlin.math.ceil
-
-data class CalibrationCaptureHints(
-    val focalLengthMm: Float? = null,
-    val sensorPhysicalSize: SizeF? = null
-)
 
 data class CaptureSummary(
     val medianIso: Int?,
@@ -52,18 +46,10 @@ data class CharucoCalibrationResult(
 private data class CalibrationSolveResult(
     val success: Boolean,
     val message: String,
-    val variantName: String,
-    val flagsLabel: String,
     val reprojectionErrorPx: Double? = null,
     val cameraMatrix: Mat? = null,
     val distortion: Mat? = null,
     val perViewErrors: DoubleArray? = null
-)
-
-private data class SolverVariant(
-    val name: String,
-    val flags: Int,
-    val flagsLabel: String
 )
 
 class CharucoCalibrationEngine {
@@ -72,7 +58,6 @@ class CharucoCalibrationEngine {
 
     fun calibrate(
         frames: List<AcceptedFrameRecord>,
-        hints: CalibrationCaptureHints = CalibrationCaptureHints(),
         onProgress: ((processed: Int, total: Int) -> Unit)? = null
     ): CharucoCalibrationResult {
         if (frames.size < AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION) {
@@ -106,10 +91,9 @@ class CharucoCalibrationEngine {
             )
         }
 
-        val firstPass = solveBestVariant(
+        val firstPass = solveCalibration(
             correspondences = correspondences,
-            imageSize = imageSize,
-            hints = hints
+            imageSize = imageSize
         )
         if (!firstPass.success) {
             releaseCorrespondences(correspondences)
@@ -136,10 +120,9 @@ class CharucoCalibrationEngine {
             )
             firstPass.cameraMatrix?.release()
             firstPass.distortion?.release()
-            solveBestVariant(
+            solveCalibration(
                 correspondences = filtered,
-                imageSize = imageSize,
-                hints = hints
+                imageSize = imageSize
             )
         } else {
             firstPass
@@ -181,8 +164,8 @@ class CharucoCalibrationEngine {
             perViewErrorsPx = perViewErrors,
             medianPerViewErrorPx = medianViewError,
             p90PerViewErrorPx = p90ViewError,
-            solverVariant = finalPass.variantName,
-            solverFlags = finalPass.flagsLabel,
+            solverVariant = SOLVER_VARIANT_NAME,
+            solverFlags = SOLVER_FLAGS_LABEL,
             fx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 0),
             fy = OpenCvMatAccess.readMatrixValue(cameraMatrix, 1, 1),
             cx = OpenCvMatAccess.readMatrixValue(cameraMatrix, 0, 2),
@@ -215,51 +198,6 @@ class CharucoCalibrationEngine {
         return correspondences
     }
 
-    private fun solverVariants(viewCount: Int): List<SolverVariant> {
-        return listOf(
-            SolverVariant(
-                name = "flags_zero",
-                flags = 0,
-                flagsLabel = "0"
-            )
-        )
-    }
-
-    private fun solveBestVariant(
-        correspondences: List<FrameCorrespondence>,
-        imageSize: Size,
-        hints: CalibrationCaptureHints
-    ): CalibrationSolveResult {
-        val candidates = solverVariants(correspondences.size).mapNotNull { variant ->
-            val solved = solveCalibration(
-                correspondences = correspondences,
-                imageSize = imageSize,
-                hints = hints,
-                variant = variant
-            )
-            if (solved.success) solved else {
-                solved.cameraMatrix?.release()
-                solved.distortion?.release()
-                null
-            }
-        }
-
-        if (candidates.isEmpty()) {
-            return CalibrationSolveResult(
-                success = false,
-                message = "All solver variants failed",
-                variantName = "none",
-                flagsLabel = "none"
-            )
-        }
-
-        return candidates.minWith(
-            compareBy<CalibrationSolveResult> { it.reprojectionErrorPx ?: Double.MAX_VALUE }
-                .thenBy { it.perViewErrors?.median() ?: Double.MAX_VALUE }
-                .thenBy { it.perViewErrors?.percentile90() ?: Double.MAX_VALUE }
-        )
-    }
-
     private fun computeOutlierThreshold(perViewErrors: DoubleArray?): Double {
         if (perViewErrors == null || perViewErrors.isEmpty()) {
             return AcceptanceConfig.MAX_PER_VIEW_REPROJECTION_ERROR_PX
@@ -288,9 +226,7 @@ class CharucoCalibrationEngine {
 
     private fun solveCalibration(
         correspondences: List<FrameCorrespondence>,
-        imageSize: Size,
-        hints: CalibrationCaptureHints,
-        variant: SolverVariant
+        imageSize: Size
     ): CalibrationSolveResult {
         val objectPointSets = correspondences.map { it.set.objectPoints }
         val imagePointSets = correspondences.map { it.set.imagePoints }
@@ -315,7 +251,7 @@ class CharucoCalibrationEngine {
                 stdIntrinsics,
                 stdExtrinsics,
                 perViewErrors,
-                variant.flags,
+                SOLVER_FLAGS,
                 TermCriteria(TermCriteria.COUNT + TermCriteria.EPS, 100, 1e-7)
             )
 
@@ -332,8 +268,6 @@ class CharucoCalibrationEngine {
             CalibrationSolveResult(
                 success = true,
                 message = "ok",
-                variantName = variant.name,
-                flagsLabel = variant.flagsLabel,
                 reprojectionErrorPx = reprojectionError,
                 cameraMatrix = cameraMatrix,
                 distortion = distortion,
@@ -349,9 +283,7 @@ class CharucoCalibrationEngine {
             distortion.release()
             CalibrationSolveResult(
                 success = false,
-                message = "Calibration failed (${variant.name}): ${exception.message}",
-                variantName = variant.name,
-                flagsLabel = variant.flagsLabel
+                message = "Calibration failed ($SOLVER_VARIANT_NAME): ${exception.message}"
             )
         }
     }
@@ -419,7 +351,7 @@ class CharucoCalibrationEngine {
             output.writeText(
                 JSONObject().apply {
                     put("source", "android_camera2_charuco_live")
-                    put("device_hint", "Samsung Galaxy S23 Ultra")
+                    put("device_hint", DeviceInfo.describe())
                     put("camera_id", cameraId)
                     put("image_width", portrait.imageWidth)
                     put("image_height", portrait.imageHeight)
@@ -536,5 +468,8 @@ class CharucoCalibrationEngine {
         const val CALIBRATION_OUTPUT_FILE = "charuco_calibration_result.json"
         private const val JSON_INDENT_SPACES = 2
         private const val TAG = "CharucoCalibrationEngine"
+        private const val SOLVER_VARIANT_NAME = "flags_zero"
+        private const val SOLVER_FLAGS = 0
+        private const val SOLVER_FLAGS_LABEL = "0"
     }
 }
