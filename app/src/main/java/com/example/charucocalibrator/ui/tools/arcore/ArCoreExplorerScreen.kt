@@ -4,11 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.opengl.GLSurfaceView
-import android.os.Handler
-import android.os.Looper
-import android.view.PixelCopy
 import android.view.Display
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -57,9 +53,9 @@ import com.example.charucocalibrator.R
 import com.example.charucocalibrator.arcore.ArCoreAvailabilityStatus
 import com.example.charucocalibrator.arcore.ArCoreCapabilityChecker
 import com.example.charucocalibrator.arcore.ArCoreInstallResult
-import com.example.charucocalibrator.arcore.ArCoreOverlayEvidence
 import com.example.charucocalibrator.arcore.ArCoreSessionController
 import com.example.charucocalibrator.arcore.ArCorePreviewRenderer
+import com.example.charucocalibrator.arcore.ArCoreSnapshotCapture
 import com.example.charucocalibrator.arcore.ArCoreSnapshotExporter
 import com.example.charucocalibrator.arcore.ArCoreSnapshotResult
 import com.example.charucocalibrator.arcore.ArCoreSnapshotShare
@@ -67,11 +63,7 @@ import com.example.charucocalibrator.arcore.model.ArCoreFrameState
 import com.example.charucocalibrator.arcore.model.DepthImageData
 import com.example.charucocalibrator.arcore.model.DepthOverlayMode
 import com.example.charucocalibrator.arcore.model.DepthSourceToggle
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import kotlin.coroutines.resume
 
 @Composable
 fun ArCoreExplorerScreen(
@@ -297,24 +289,15 @@ fun ArCoreExplorerScreen(
                                 exportInProgress = true
                                 exportError = null
                                 try {
-                                    val previewBitmap = captureGlSurface(surfaceView)
-                                    val snapshotState = suspendCancellableCoroutine { cont ->
-                                        surfaceView.queueEvent {
-                                            cont.resume(
-                                                sessionController.copyFrameStateForExport(),
-                                            ) { }
-                                        }
-                                    }
-                                    val evidence = ArCoreOverlayEvidence(
-                                        previewBitmap = previewBitmap,
+                                    val result = ArCoreSnapshotCapture.captureAndExport(
+                                        context = context,
+                                        surfaceView = surfaceView,
+                                        sessionController = sessionController,
                                         mode = overlayMode,
                                         source = depthSource,
                                         opacity = overlayOpacity,
                                         confidenceThreshold = confidenceThreshold,
                                     )
-                                    val result = withContext(Dispatchers.IO) {
-                                        ArCoreSnapshotExporter.exportSnapshot(context, snapshotState, evidence)
-                                    }
                                     lastExport = result
                                     if (!result.rawDepthAvailable &&
                                         !result.smoothedDepthAvailable &&
@@ -480,31 +463,6 @@ private fun ArCoreOverlayControlSection(
         }
     }
 }
-
-private suspend fun captureGlSurface(surfaceView: GLSurfaceView): Bitmap? =
-    suspendCancellableCoroutine { cont ->
-        val width = surfaceView.width
-        val height = surfaceView.height
-        if (width <= 0 || height <= 0) {
-            cont.resume(null)
-            return@suspendCancellableCoroutine
-        }
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(
-            surfaceView,
-            bitmap,
-            { result ->
-                if (result == PixelCopy.SUCCESS) {
-                    cont.resume(bitmap)
-                } else {
-                    bitmap.recycle()
-                    cont.resume(null)
-                }
-            },
-            Handler(Looper.getMainLooper()),
-        )
-        cont.invokeOnCancellation { bitmap.recycle() }
-    }
 
 @Composable
 private fun DepthStatsPanel(frameState: ArCoreFrameState) {
