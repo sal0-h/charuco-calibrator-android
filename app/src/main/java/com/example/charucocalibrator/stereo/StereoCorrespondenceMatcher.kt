@@ -73,7 +73,7 @@ object StereoCorrespondenceMatcher {
         val markerCorners = ArrayList<Mat>()
         val markerIds = Mat()
         return try {
-            val bgr = com.example.charucocalibrator.YuvToGrayMat.toBgr(gray)
+            val bgr = com.example.charucocalibrator.YuvConversions.toBgr(gray)
             try {
                 detector.detectBoard(bgr, charucoCorners, charucoIds, markerCorners, markerIds)
                 com.example.charucocalibrator.CharucoCornerRefiner.refine(gray, charucoCorners)

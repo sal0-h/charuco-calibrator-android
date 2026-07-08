@@ -78,7 +78,7 @@ object CharucoCorrespondenceBuilder {
             return null
         }
 
-        val bgr = YuvToGrayMat.toBgr(gray)
+        val bgr = YuvConversions.toBgr(gray)
         gray.release()
 
         val charucoCorners = Mat()

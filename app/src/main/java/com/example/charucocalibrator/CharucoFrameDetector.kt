@@ -57,7 +57,7 @@ class CharucoFrameDetector {
     private val detector by lazy { CharucoDetectorFactory.create(board) }
 
     fun detect(gray: Mat): DetectionResult {
-        val bgr = YuvToGrayMat.toBgr(gray)
+        val bgr = YuvConversions.toBgr(gray)
         val charucoCorners = Mat()
         val charucoIds = Mat()
         val markerCorners = ArrayList<Mat>()

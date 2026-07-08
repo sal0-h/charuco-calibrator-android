@@ -104,7 +104,7 @@ class FrameAnalysisPipeline(
         lastProcessTimeNs = now
 
         val gray = try {
-            YuvToGrayMat.fromYuv420888(image)
+            YuvConversions.fromYuv420888(image)
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to convert YUV frame to grayscale", exception)
             publishSnapshot(
