@@ -2,7 +2,6 @@ package com.example.charucocalibrator
 
 import android.content.Context
 import android.util.Log
-import android.util.SizeF
 import org.json.JSONArray
 import org.json.JSONObject
 import org.opencv.android.OpenCVLoader
@@ -15,11 +14,6 @@ import org.opencv.core.TermCriteria
 import java.io.File
 import java.time.Instant
 import kotlin.math.ceil
-
-data class CalibrationCaptureHints(
-    val focalLengthMm: Float? = null,
-    val sensorPhysicalSize: SizeF? = null
-)
 
 data class CaptureSummary(
     val medianIso: Int?,
@@ -64,7 +58,6 @@ class CharucoCalibrationEngine {
 
     fun calibrate(
         frames: List<AcceptedFrameRecord>,
-        hints: CalibrationCaptureHints = CalibrationCaptureHints(),
         onProgress: ((processed: Int, total: Int) -> Unit)? = null
     ): CharucoCalibrationResult {
         if (frames.size < AcceptanceConfig.MIN_FRAMES_FOR_CALIBRATION) {
@@ -100,8 +93,7 @@ class CharucoCalibrationEngine {
 
         val firstPass = solveCalibration(
             correspondences = correspondences,
-            imageSize = imageSize,
-            hints = hints
+            imageSize = imageSize
         )
         if (!firstPass.success) {
             releaseCorrespondences(correspondences)
@@ -130,8 +122,7 @@ class CharucoCalibrationEngine {
             firstPass.distortion?.release()
             solveCalibration(
                 correspondences = filtered,
-                imageSize = imageSize,
-                hints = hints
+                imageSize = imageSize
             )
         } else {
             firstPass
@@ -235,8 +226,7 @@ class CharucoCalibrationEngine {
 
     private fun solveCalibration(
         correspondences: List<FrameCorrespondence>,
-        imageSize: Size,
-        hints: CalibrationCaptureHints
+        imageSize: Size
     ): CalibrationSolveResult {
         val objectPointSets = correspondences.map { it.set.objectPoints }
         val imagePointSets = correspondences.map { it.set.imagePoints }

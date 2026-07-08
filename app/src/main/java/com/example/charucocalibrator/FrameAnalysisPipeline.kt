@@ -75,9 +75,6 @@ class FrameAnalysisPipeline(
     private var analysisPausedForCalibration = false
 
     @Volatile
-    private var calibrationHints = CalibrationCaptureHints()
-
-    @Volatile
     private var latestCaptureMetadata: FrameMetadata? = null
 
     @Volatile
@@ -122,10 +119,6 @@ class FrameAnalysisPipeline(
             }
             processGrayFrame(gray)
         }
-    }
-
-    fun setCalibrationCaptureHints(hints: CalibrationCaptureHints) {
-        calibrationHints = hints
     }
 
     fun startAutoCapture() {
@@ -190,8 +183,7 @@ class FrameAnalysisPipeline(
                 Log.i(TAG, "Starting calibration with ${frames.size} accepted frames")
                 val result = OpenCvInitializer.withLock {
                     calibrationEngine.calibrate(
-                        frames = frames,
-                        hints = calibrationHints
+                        frames = frames
                     ) { processed, total ->
                         latestCalibrationStatus = "Calibrating frame $processed/$total..."
                         publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)

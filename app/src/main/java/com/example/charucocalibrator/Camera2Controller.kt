@@ -109,9 +109,6 @@ class Camera2Controller(
     @Volatile
     private var calibrationCaptureLocked = false
 
-    @Volatile
-    private var calibrationCaptureHints = CalibrationCaptureHints()
-
     private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(
             surface: SurfaceTexture,
@@ -232,13 +229,6 @@ class Camera2Controller(
                 }
 
                 val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-                calibrationCaptureHints = CalibrationCaptureHints(
-                    focalLengthMm = characteristics[
-                        CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
-                    ]?.firstOrNull(),
-                    sensorPhysicalSize = characteristics[CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE]
-                )
-                frameAnalysisPipeline.setCalibrationCaptureHints(calibrationCaptureHints)
                 sensorOrientationDegrees =
                     characteristics[CameraCharacteristics.SENSOR_ORIENTATION]
                 val streamMap = characteristics[
