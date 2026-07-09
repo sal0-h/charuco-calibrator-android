@@ -3,9 +3,14 @@ package com.example.charucocalibrator
 /**
  * Rotates sensor-native landscape intrinsics to the qsiurp pipeline portrait grid.
  *
- * Pixel map (90° CCW): x_p = H_l - y_l, y_p = x_l
- * Intrinsics: W_p = H_l, H_p = W_l, fx_p = fy_l, fy_p = fx_l,
- * cx_p = H_l - cy_l, cy_p = cx_l. Distortion unchanged.
+ * The transform is a 90° **clockwise** image rotation, which is what turns the S23 Ultra's
+ * sensor-native landscape buffer (SENSOR_ORIENTATION 90°) into an upright portrait image.
+ * Pixel map: x_p = H_l - y_l, y_p = x_l. Intrinsics: W_p = H_l, H_p = W_l, fx_p = fy_l,
+ * fy_p = fx_l, cx_p = H_l - cy_l, cy_p = cx_l. Distortion unchanged.
+ *
+ * Note: the exported [PipelinePortraitIntrinsicsRotator.ORIENTATION_CONVENTION] label
+ * "pipeline_portrait_ccw90" is a legacy contract string kept for downstream compatibility;
+ * it denotes this clockwise upright-portrait mapping despite the "ccw" spelling.
  */
 data class PipelinePortraitIntrinsics(
     val imageWidth: Int,
