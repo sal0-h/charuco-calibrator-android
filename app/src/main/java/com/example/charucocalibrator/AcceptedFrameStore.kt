@@ -56,6 +56,11 @@ class AcceptedFrameStore(
         return sessionManager.startNewSession()
     }
 
+    /**
+     * Persists an accepted frame. The [detection] Mats are cloned into the stored record, so the
+     * caller retains ownership of [gray] and [detection] and must release the detection
+     * correspondences itself (on every path, including when this returns null).
+     */
     fun saveFrame(
         gray: Mat,
         cameraId: String,
@@ -139,10 +144,6 @@ class AcceptedFrameStore(
             synchronized(lock) {
                 records += record
             }
-            corners.release()
-            ids.release()
-            markers.forEach(Mat::release)
-            markerIds.release()
             record
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to save accepted frame", exception)
