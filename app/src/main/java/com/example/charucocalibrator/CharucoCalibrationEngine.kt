@@ -330,13 +330,11 @@ class CharucoCalibrationEngine {
         val distortionValues = MatOfDouble()
         return try {
             distortion.convertTo(distortionValues, CvType.CV_64F)
-            val coeffs = DoubleArray(5) { index ->
-                if (index < distortionValues.total().toInt()) {
-                    OpenCvMatAccess.readMatrixValue(distortionValues, index, 0)
-                } else {
-                    0.0
-                }
-            }
+            val coeffs = OpenCvMatAccess.readCoefficientVector(
+                rows = distortionValues.rows(),
+                cols = distortionValues.cols(),
+                count = 5
+            ) { row, column -> distortionValues.get(row, column)?.firstOrNull() }
 
             val portrait = PipelinePortraitIntrinsicsRotator.rotateFromSensorLandscape(
                 sensorLandscapeWidth = imageWidth,

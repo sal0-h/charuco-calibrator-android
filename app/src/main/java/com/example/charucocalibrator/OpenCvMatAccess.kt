@@ -72,6 +72,28 @@ object OpenCvMatAccess {
             matrix.get(row, column)?.firstOrNull() ?: default
         }.getOrDefault(default)
 
+    /**
+     * Reads a length-[count] coefficient vector from a Mat that may be stored as either a
+     * 1×N row vector or an N×1 column vector, using [get] to fetch a cell (null when out of
+     * range). A row Mat is read across columns; otherwise it is read down rows. Missing cells
+     * default to 0.0.
+     *
+     * OpenCV's `calibrateCamera` returns distortion as a 1×5 row vector, so reading it down
+     * column 0 silently yields only the first coefficient — this helper reads the correct axis.
+     */
+    fun readCoefficientVector(
+        rows: Int,
+        cols: Int,
+        count: Int,
+        get: (row: Int, col: Int) -> Double?
+    ): DoubleArray {
+        val readAcrossColumns = rows == 1 && cols != 1
+        return DoubleArray(count) { index ->
+            val value = if (readAcrossColumns) get(0, index) else get(index, 0)
+            value ?: 0.0
+        }
+    }
+
     private fun readRow(mat: Mat, row: Int, minValues: Int): DoubleArray? {
         val channels = mat.channels().coerceAtLeast(1)
         val values = when (channels) {

@@ -638,16 +638,18 @@ class Camera2Controller(
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            // OIS/EIS shift the optical path and corrupt intrinsics, so keep them off whenever
+            // frames can be analyzed/accepted — not only after the delayed calibration lock.
+            set(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
+            )
+            set(
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF
+            )
             if (calibrationCaptureLocked) {
                 set(CaptureRequest.CONTROL_AWB_LOCK, true)
-                set(
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
-                )
-                set(
-                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF
-                )
             }
         }.build()
     }

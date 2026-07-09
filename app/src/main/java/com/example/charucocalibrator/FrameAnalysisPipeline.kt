@@ -12,6 +12,8 @@ import org.opencv.core.MatOfDouble
 import org.opencv.imgproc.Imgproc
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class FrameAnalysisPipeline(
@@ -80,6 +82,9 @@ class FrameAnalysisPipeline(
     @Volatile
     private var latestCaptureStability: CaptureStabilityState? = null
 
+    /** True while a frame is being analyzed; bounds the analysis queue to one in-flight frame. */
+    private val analysisInFlight = AtomicBoolean(false)
+
     fun submitFrame(
         image: Image,
         rawCount: Long,
@@ -89,20 +94,28 @@ class FrameAnalysisPipeline(
     ) {
         if (released) return
         rawFrameCount = rawCount
-        latestSensorTimestampNs = sensorTimestampNs
-        latestCaptureMetadata = captureMetadata ?: metadataLookup(sensorTimestampNs)
-        latestCaptureStability = captureStability
 
         val now = System.nanoTime()
         if (now - lastProcessTimeNs < MIN_PROCESS_INTERVAL_NS) {
             publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
             return
         }
+
+        // G: only one frame in flight — skip instead of stacking 12MP Mats when analysis lags.
+        if (!analysisInFlight.compareAndSet(false, true)) {
+            publishSnapshot(processedCounter.get(), latestSharpness, latestDetection)
+            return
+        }
         lastProcessTimeNs = now
+
+        // E: resolve the metadata for THIS frame and bind it (plus stability + timestamp) to the
+        // analysis task, so the gate and the saved metadata always match the frame's pixels.
+        val boundMetadata = captureMetadata ?: metadataLookup(sensorTimestampNs)
 
         val gray = try {
             YuvConversions.fromYuv420888(image)
         } catch (exception: Exception) {
+            analysisInFlight.set(false)
             Log.e(TAG, "Failed to convert YUV frame to grayscale", exception)
             publishSnapshot(
                 processedCounter.get(),
@@ -112,12 +125,19 @@ class FrameAnalysisPipeline(
             return
         }
 
-        analysisExecutor.execute {
-            if (released) {
-                gray.release()
-                return@execute
+        try {
+            analysisExecutor.execute {
+                if (released) {
+                    gray.release()
+                    analysisInFlight.set(false)
+                    return@execute
+                }
+                processGrayFrame(gray, boundMetadata, captureStability, sensorTimestampNs)
             }
-            processGrayFrame(gray)
+        } catch (rejected: RejectedExecutionException) {
+            // Executor was shut down (teardown) between the released check and dispatch.
+            gray.release()
+            analysisInFlight.set(false)
         }
     }
 
@@ -226,7 +246,12 @@ class FrameAnalysisPipeline(
         acceptedFrameStore.clear()
     }
 
-    private fun processGrayFrame(gray: Mat) {
+    private fun processGrayFrame(
+        gray: Mat,
+        captureMetadata: FrameMetadata?,
+        captureStability: CaptureStabilityState?,
+        sensorTimestampNs: Long?
+    ) {
         try {
             if (analysisPausedForCalibration) {
                 return
@@ -248,47 +273,53 @@ class FrameAnalysisPipeline(
             }
             val sharpness = frameResult.first
             val detection = frameResult.second
-            imageWidth = gray.cols()
-            imageHeight = gray.rows()
-            latestSharpness = sharpness
-            latestDetection = detection
-            val processed = processedCounter.incrementAndGet()
-            updateProcessingFps()
+            try {
+                imageWidth = gray.cols()
+                imageHeight = gray.rows()
+                latestSharpness = sharpness
+                latestDetection = detection
+                // Keep the snapshot fields consistent with the frame actually analyzed.
+                latestCaptureMetadata = captureMetadata
+                latestCaptureStability = captureStability
+                latestSensorTimestampNs = sensorTimestampNs
+                val processed = processedCounter.incrementAndGet()
+                updateProcessingFps()
 
-            if (autoCaptureEnabled) {
-                val metadata = latestCaptureMetadata
-                val stability = latestCaptureStability
-                    ?: CaptureStabilityState(CaptureStabilityStatus.METADATA_MISSING)
-                val decision = frameAcceptance.evaluate(
-                    detection = detection,
-                    sharpness = sharpness,
-                    frameWidth = gray.cols(),
-                    frameHeight = gray.rows(),
-                    acceptedCount = acceptedFrameStore.count,
-                    captureMetadata = metadata,
-                    captureStability = stability,
-                    autoCaptureActive = true
-                )
-                if (decision.accepted) {
-                    acceptedFrameStore.saveFrame(
-                        gray = gray,
-                        cameraId = cameraId,
-                        sharpness = sharpness,
+                if (autoCaptureEnabled) {
+                    val stability = captureStability
+                        ?: CaptureStabilityState(CaptureStabilityStatus.METADATA_MISSING)
+                    val decision = frameAcceptance.evaluate(
                         detection = detection,
-                        sensorTimestampNs = latestSensorTimestampNs,
-                        captureMetadata = metadata,
-                        reason = decision.message
+                        sharpness = sharpness,
+                        frameWidth = gray.cols(),
+                        frameHeight = gray.rows(),
+                        acceptedCount = acceptedFrameStore.count,
+                        captureMetadata = captureMetadata,
+                        captureStability = stability,
+                        autoCaptureActive = true
                     )
-                } else {
-                    detection.releaseCorrespondences()
+                    if (decision.accepted) {
+                        acceptedFrameStore.saveFrame(
+                            gray = gray,
+                            cameraId = cameraId,
+                            sharpness = sharpness,
+                            detection = detection,
+                            sensorTimestampNs = sensorTimestampNs,
+                            captureMetadata = captureMetadata,
+                            reason = decision.message
+                        )
+                    }
                 }
-            } else {
+
+                publishSnapshot(processed, sharpness, detection)
+            } finally {
+                // F: the store clones what it keeps, so ownership of the detection Mats stays here;
+                // release them on every path (accept, reject, or save failure) to avoid leaks.
                 detection.releaseCorrespondences()
             }
-
-            publishSnapshot(processed, sharpness, detection)
         } finally {
             gray.release()
+            analysisInFlight.set(false)
         }
     }
 

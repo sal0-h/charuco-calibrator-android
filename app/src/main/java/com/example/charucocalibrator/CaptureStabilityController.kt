@@ -61,7 +61,8 @@ class CaptureStabilityController(
             trackFocus(metadata)
             return CaptureStabilityState(
                 status = CaptureStabilityStatus.WARMING_UP,
-                referenceFocusDistance = referenceFocusDistance
+                referenceFocusDistance = referenceFocusDistance,
+                message = "warming_up"
             )
         }
 
